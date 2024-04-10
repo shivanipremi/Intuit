@@ -8,21 +8,40 @@ const
     md5 = require('md5'),
     userConfig = require('../../lib/schema/user-config'),
     {ObjectId} = require('mongodb'),
-    // constants = require('./static/user-constants'),
+    {appendS3Options, initS3Client, uploadFile, putJSONObjectAsync} = require('../../lib/s3-utils'),
+// constants = require('./static/user-constants'),
     asMain = (require.main === module);
 
+
 function parseOptions(argv) {
-    const removeTailSlash = (str) => removeTail(str || '', '/');
-    return initApiOptions(1445)
-        // .option('--confirm-email-attempts <number>', 'Max number of attempts to confirm user email', 3)
+    let options = initApiOptions(1473)
+    appendS3Options(options);
+    let opts = options
         .parse(argv)
         .opts();
+
+
+    return opts;
+}
+
+async function initS3CmdLineOptions(context) {
+    const { options } = context;
+    context.options = {
+        ...options,
+        s3AccessKey: options.s3AccessKey,
+        s3SecretKey: options.s3SecretKey,
+        s3Region: options.s3Region,
+        s3Bucket: options.s3Bucket,
+    };
+
+    return context;
 }
 
 async function initResources(options) {
     return await initialize(options)
-        .then(initValidateOptions('mongoUrl'))
-            // 'mongoUser', 'mongoPassword'))
+        .then(initValidateOptions('mongoUrl', 'mongoUser', 'mongoPassword'))
+        .then(initS3CmdLineOptions)
+        .then(initS3Client)
         .then(initMongoClient)
 }
 
@@ -39,12 +58,14 @@ function mapUserObject(user){
     return user;
 }
 
-const USER_COL = 'user_details';
+const USER_COL = 'card';
 
 class UserApp extends PayApiBaseApp {
 
     constructor(context) {
         super(context);
+        this.context = context;
+        this.s3Client = context.s3Client;
     }
 
     registerRoutes() {
@@ -53,14 +74,43 @@ class UserApp extends PayApiBaseApp {
         const invokeAsync = this.invokeAsync.bind(this);
         const checkValidationResults = PayApiBaseApp.checkValidationResults.bind(this);
         // Convention: methods used in the express handler will have the prefix handle
-        router.post('/card/onboarding',  this.validateSchema('CardPost'), invokeAsync(this.handleCardOperations));
+        //this.validateSchema('CardPost')
+        router.post('/card/onboarding',  uploadFile(5000000).any('image'), invokeAsync(this.handleCardOperations));
         router.post('/user/login', this.validateSchema('UserLogin'), invokeAsync(this.handleLogin));
         router.put('/user/resetPassword', this.validateSchema('UserPasswordReset'), invokeAsync(this.resetPassword));
         router.post('/user/verify', this.validateSchema('UserConfirmEmail'), invokeAsync(this.verifyEmail));
-        router.get('/user/:id', invokeAsync(this.getUserById));
+        router.get('/cards', invokeAsync(this.getCards));
     }
 
 
+    /**
+     * This function uploads image to s3.
+     * @param file
+     * @param data
+     * @param options
+     * @param log
+     * @returns filekey
+     */
+    async uploadBillToS3(file, data, options, log, s3Client)  {
+        const {s3Bucket} = options;
+        let ext = file.mimetype.split('/');
+        let fileKey = `${billScanS3KeyPrefix}/${data._id}.${ext[ext.length - 1]}`;
+        const s3Params = {
+            Key: fileKey,
+            Bucket: s3Bucket,
+            Body: file.buffer
+        };
+
+        try {
+            await s3Client.putObject(s3Params).promise();
+            log.info(`File ${fileKey} uploaded successfully to ${s3Bucket}`);
+            return fileKey;
+        }
+        catch (e) {
+            log.error(`Error while uploading files: ${e.message}`, e, {});
+            throw new Error(`${e.code || ''}-${e.message}`);
+        }
+    };
 
 
     /**
@@ -115,7 +165,6 @@ class UserApp extends PayApiBaseApp {
         };
         const user = await userCol.findOne(query);
         if (user) {
-            console.log("user here", user)
             return createErrorResponse(409, 'user.email.exists', 'This email already exists.');
         }
 
@@ -130,7 +179,6 @@ class UserApp extends PayApiBaseApp {
             modifiedBy: 'demo',
             ...data
         };
-
         const result = await userCol.insertOne(doc, {});
         if (result.acknowledged !== true || result.insertedId == null) {
             return createErrorResponse(500, 'user.save.error', 'Error creating user');
@@ -183,13 +231,39 @@ class UserApp extends PayApiBaseApp {
      * @returns {Promise<*>}
      */
     async handleCardOperations(req) {
-        const { log } = req;
+
+        const {files } = req;
+        console.log("rea", req.files)
+        const { s3Client, log, options } = this;
+        const { s3Bucket } = options;
+        let s3Options = { bucket: s3Bucket };
+
+        const chars = [..."ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"];
+        let fileToken = [...Array(8)].map(i=>chars[Math.random()*chars.length|0]).join``;
+
         // Assume schema validation already happened before
         let doc = req.body;
-        console.log("===DOC====", doc)
+        let fileKey ='';
 
         try {
             let {primaryUserId, childId, email, updateParentCard = false, ...body} = doc;
+
+            // need to refreactor this part, either delete file if some error occured/do update ioperation to update the url
+            if(files && files.length) {
+                for(let file of files) {
+                    let ext = file.mimetype.split('/');
+                    let fileName = file.fieldname;
+                    fileKey = `user/${fileToken}.${ext[ext.length - 1]}`;
+                    let uploadResponse = await putJSONObjectAsync(s3Options, fileKey, file.buffer, file.mimetype, s3Client, log);
+                    if(!uploadResponse) {
+                        return createErrorResponse(500, 'image.upload.error', 'Error in uploading image.');
+                    }
+                    doc[fileName] = `${options.s3Url}/${fileKey}`;
+                }
+            }
+            if(file) {
+
+            }
 
             if(primaryUserId && childId) {
                 // update child
@@ -200,6 +274,7 @@ class UserApp extends PayApiBaseApp {
                 // update primary user
                 return;
             }
+            doc.fileToken = fileToken;
 
             if(primaryUserId) {
                 // add child
@@ -213,7 +288,6 @@ class UserApp extends PayApiBaseApp {
 
             let isAdmin = true, isPrimary = true;
             let result = await this.insertCard(doc, email, isAdmin, isPrimary);
-
             result.primaryUserId = result._id;
             return {
                 status: 200,
@@ -341,23 +415,28 @@ class UserApp extends PayApiBaseApp {
     * @param req
     * @returns {Promise <*>}
     */
-    async getUserById(req){
+    async getCards(req){
         const { log } = req;
         const userCol = this.db.collection(USER_COL);
-        const { id } = req.params;
-        let user;
+        const { id } = req.query;
+        let users = [];
         try {
-            user = await userCol.findOne({ _id: ObjectId(id) });
-            if(!user){
-                log.error(`user not found by id ${id}`);
-                return createErrorResponse(404, 'user.not.found', 'User not found by given id');
+            let query ={};
+            if(id) {
+                query._id = new ObjectId(id);
             }
+            console.log("query", query)
+            users = await userCol.find(query).toArray();
+            // if(!user){
+            //     log.error(`user not found by id ${id}`);
+            //     return createErrorResponse(404, 'user.not.found', 'User not found by given id');
+            // }
             return {
                 status: 200,
-                content: mapUserObject(user)
+                content: users
             }
         } catch (e) {
-            log.error(`error finding user by id ${id}`, e, {});
+            log.error(`error finding user(id- ${id} )`, e, {});
             return createErrorResponse(500, 'user.find.error', 'Error finding user');
         }
     }
