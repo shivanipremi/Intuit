@@ -58,7 +58,7 @@ function mapUserObject(user){
     return user;
 }
 
-const USER_COL = 'card';
+const USER_COL = 'cards';
 
 class UserApp extends PayApiBaseApp {
 
