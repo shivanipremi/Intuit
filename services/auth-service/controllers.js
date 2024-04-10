@@ -261,9 +261,9 @@ class UserApp extends PayApiBaseApp {
                     doc[fileName] = `${options.s3Url}/${fileKey}`;
                 }
             }
-            if(file) {
 
-            }
+            console.log("doc here", doc)
+
 
             if(primaryUserId && childId) {
                 // update child
