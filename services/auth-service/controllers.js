@@ -74,12 +74,15 @@ class UserApp extends PayApiBaseApp {
         const invokeAsync = this.invokeAsync.bind(this);
         const checkValidationResults = PayApiBaseApp.checkValidationResults.bind(this);
         // Convention: methods used in the express handler will have the prefix handle
-        //this.validateSchema('CardPost')
-        router.post('/card/onboarding',  uploadFile(5000000).any('image'), invokeAsync(this.handleCardOperations));
+        //
+        router.post('/card/onboarding', uploadFile(5000000).any('image'), this.validateSchema('CardPost'), invokeAsync(this.handleCardOperations));
+        router.post('/card/update', uploadFile(5000000).any('image'), this.validateSchema('CardUpdate'), invokeAsync(this.handleCardOperations));
+
         router.post('/user/login', this.validateSchema('UserLogin'), invokeAsync(this.handleLogin));
         router.put('/user/resetPassword', this.validateSchema('UserPasswordReset'), invokeAsync(this.resetPassword));
         router.post('/user/verify', this.validateSchema('UserConfirmEmail'), invokeAsync(this.verifyEmail));
         router.get('/cards', invokeAsync(this.getCards));
+
     }
 
 
@@ -156,8 +159,6 @@ class UserApp extends PayApiBaseApp {
     async insertCard(data, email, isAdmin, isPrimary) {
         const { db } = this;
         const userCol = db.collection(USER_COL);
-
-
         const query = {
             $or: [
                 {email}
@@ -179,6 +180,7 @@ class UserApp extends PayApiBaseApp {
             modifiedBy: 'demo',
             ...data
         };
+        console.log("========data to be inserted============", doc)
         const result = await userCol.insertOne(doc, {});
         if (result.acknowledged !== true || result.insertedId == null) {
             return createErrorResponse(500, 'user.save.error', 'Error creating user');
@@ -193,37 +195,53 @@ class UserApp extends PayApiBaseApp {
      *  @param req
      *  @returns {Promise<*>}
      * */
-    async updateCard(data, email) {
-        const query = {loginId, active: {$in: [false]}};
+    async updateCard(userId, data, parentId) {
+        const { db } = this;
+        const userCol = db.collection(USER_COL);
+
+        let {primaryUserId, updateParentCard,...updateData} = data
+        // update primary user
+        if(data.email) {
+            const query ={
+                _id : {$ne : new ObjectId(userId)},
+                email : data.email
+            };
+            let checkIfEmailExists = await userCol.findOne(query);
+            if (checkIfEmailExists) {
+                return createErrorResponse(404, 'email.already.exists', 'This email id already exists')
+            }
+
+            // check if email aready exists
+            // if exists, throw an error and return
+            // if not continue;
+        }
+
+        const query ={
+            _id : new ObjectId(userId)
+        };
+        if(parentId) {
+            query.primaryUserId = new ObjectId(parentId)
+        }
+
+        console.log("query here", query)
         const updateOptions = {
             $set: {
                 active: true,
-                // modifiedBy: issuer,
-                modifiedOn: new Date()
-            },
-            $unset: {
-                confirmToken: 1,
-                confirmEmailAttempts: 1
+                modifiedBy: 'demo',
+                modifiedOn: new Date(),
+                ...updateData
             }
         };
-        let user = await userCol.findOne(query);
-        if (!user) {
-            return createErrorResponse(404, 'user.not.found', 'User not found by loginId')
-        }
-        if(user.confirmEmailAttempts >= this.options.confirmEmailAttempts){
-            return createErrorResponse(403, 'confirm.email.attempts.exceeded', 'Max number of attempts to confirm email exceeded');
-        }
-        if (user.confirmToken !== token) {
-            await userCol.findOneAndUpdate(query, {$inc: {confirmEmailAttempts : 1}});
-            return createErrorResponse(422, 'confirm.email.token.mismatch', 'Incorrect value of confirm email token');
-        }
         const writeResult = await userCol.findOneAndUpdate(query, updateOptions, {
             returnDocument: 'after'
         });
-        if (writeResult.ok !== 1 || writeResult.lastErrorObject.n === 0) {
-            return createErrorResponse(404, 'user.not.found', 'Could not identify user to update');
+        console.log("write result", writeResult)
+        if (!writeResult) {
+            return createErrorResponse(404, 'card.not.found', 'Could not identify card to update');
         }
-        doc = writeResult.value;
+        console.log("write result of findoneandupdate", writeResult)
+        let doc = writeResult;
+        return doc;
     }
     /**
      * Insert/Update Parent and Child Cards.
@@ -233,7 +251,6 @@ class UserApp extends PayApiBaseApp {
     async handleCardOperations(req) {
 
         const {files } = req;
-        console.log("rea", req.files)
         const { s3Client, log, options } = this;
         const { s3Bucket } = options;
         let s3Options = { bucket: s3Bucket };
@@ -246,7 +263,7 @@ class UserApp extends PayApiBaseApp {
         let fileKey ='';
 
         try {
-            let {primaryUserId, childId, email, updateParentCard = false, ...body} = doc;
+            let {primaryUserId, childId, updateParentCard = false, ...body} = doc;
 
             // need to refreactor this part, either delete file if some error occured/do update ioperation to update the url
             if(files && files.length) {
@@ -258,36 +275,59 @@ class UserApp extends PayApiBaseApp {
                     if(!uploadResponse) {
                         return createErrorResponse(500, 'image.upload.error', 'Error in uploading image.');
                     }
-                    doc[fileName] = `${options.s3Url}/${fileKey}`;
+                    body[fileName] = `${options.s3Url}/${fileKey}`;
                 }
             }
 
-            console.log("doc here", doc)
+            console.log("doc here", body)
 
 
             if(primaryUserId && childId) {
+                console.log("==================Updating child for primary User=====================", primaryUserId, childId)
                 // update child
-                return;
-            }
+                try {
+                    let result =  await this.updateCard(childId, doc, primaryUserId);
+                    return {
+                        status: 200,
+                        content: result
+                    };
 
+                } catch(err) {
+                    console.log("error here", err)
+                }
+            }
+            // Case : Edit primary User
             if(primaryUserId && updateParentCard) {
-                // update primary user
-                return;
-            }
-            doc.fileToken = fileToken;
+                console.log("=========Updating primary user Id=============", {updateParentCard, primaryUserId})
+                try {
+                    let result =  await this.updateCard(primaryUserId, doc);
+                    return {
+                        status: 200,
+                        content: result
+                    };
 
+                } catch(err) {
+                    console.log("error here", err)
+                }
+
+            }
+            // Case : Add child User by primary User
             if(primaryUserId) {
+                console.log("=========Add Child=============", primaryUserId)
+
                 // add child
-                let result = await this.insertCard(doc, email, false, false);
+                body.primaryUserId = new ObjectId(primaryUserId);
+                body.isChild = true;
+                let result = await this.insertCard(body, body.email, false, false);
                 result.childUserId = result._id;
                 return {
                     status: 200,
                     content: result
                 };
             }
-
+            // Case : Add primary User
             let isAdmin = true, isPrimary = true;
-            let result = await this.insertCard(doc, email, isAdmin, isPrimary);
+            let result = await this.insertCard(body, body.email, isAdmin, isPrimary);
             result.primaryUserId = result._id;
             return {
                 status: 200,
@@ -418,15 +458,18 @@ class UserApp extends PayApiBaseApp {
     async getCards(req){
         const { log } = req;
         const userCol = this.db.collection(USER_COL);
-        const { id } = req.query;
+        const { id, primaryUserId } = req.query;
         let users = [];
         try {
             let query ={};
             if(id) {
                 query._id = new ObjectId(id);
             }
+            if(primaryUserId) {
+                query.primaryUserId = new ObjectId(primaryUserId)
+            }
             console.log("query", query)
-            users = await userCol.find(query).toArray();
+            users = await userCol.find(query).sort({ modifiedOn: -1 }).toArray();
             // if(!user){
             //     log.error(`user not found by id ${id}`);
             //     return createErrorResponse(404, 'user.not.found', 'User not found by given id');
