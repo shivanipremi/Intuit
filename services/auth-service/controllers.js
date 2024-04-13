@@ -4,7 +4,7 @@ const
     {
         initApiOptions, createErrorResponse, PayApiBaseApp, initMongoClient,
     } = require('../../lib/services/base-api-ms'),
-    { initialize, initValidateOptions } = require('../../lib/services/service-base-v2'),
+    { initialize, initValidateOptions, addAccessControlOriginHeader } = require('../../lib/services/service-base-v2'),
     md5 = require('md5'),
     userConfig = require('../../lib/schema/user-config'),
     {ObjectId} = require('mongodb'),
@@ -60,6 +60,20 @@ function mapUserObject(user){
 
 const USER_COL = 'cards';
 
+
+function allowCrossDomain(req, res, next) {
+    res.header("Access-Control-Allow-Origin", "*")
+    res.header(
+        "Access-Control-Allow-Headers",
+        "Origin, X-Requested-With, Content-Type, Accept, Authorization,idtoken"
+    );
+    if (req.method === 'OPTIONS') {
+        res.header('Access-Control-Allow-Methods', 'PUT, POST, PATCH, DELETE, GET');
+        return res.status(200).json({});
+    }
+    next();
+}
+
 class UserApp extends PayApiBaseApp {
 
     constructor(context) {
@@ -71,6 +85,10 @@ class UserApp extends PayApiBaseApp {
     registerRoutes() {
         this.initSchemaValidator(userConfig);
         const router = this.router;
+
+        this.app.use(allowCrossDomain.bind(this))
+
+
         const invokeAsync = this.invokeAsync.bind(this);
         const checkValidationResults = PayApiBaseApp.checkValidationResults.bind(this);
         // Convention: methods used in the express handler will have the prefix handle
