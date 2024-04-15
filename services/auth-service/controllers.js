@@ -4,46 +4,53 @@ const
     {
         initApiOptions, createErrorResponse, PayApiBaseApp, initMongoClient,
     } = require('../../lib/services/base-api-ms'),
-    { initialize, initValidateOptions, addAccessControlOriginHeader } = require('../../lib/services/service-base-v2'),
+    { initialize, initValidateOptions, allowCrossDomain } = require('../../lib/services/service-base-v2'),
     md5 = require('md5'),
     userConfig = require('../../lib/schema/user-config'),
     {ObjectId} = require('mongodb'),
-    {appendS3Options, initS3Client, uploadFile, putJSONObjectAsync} = require('../../lib/s3-utils'),
+    { OAuth2Client } = require('google-auth-library'),
+    {google} = require('googleapis'),
+     session = require('express-session'),
+{   appendS3Options, initS3Client, uploadFile, putJSONObjectAsync, initS3CmdLineOptions} = require('../../lib/s3-utils'),
 // constants = require('./static/user-constants'),
     asMain = (require.main === module);
+
+let gapiClient;
+let audience;
+
+function initGoogleAuthClient(context) {
+    audience = context.options.googleClientId;
+    gapiClient = new OAuth2Client(audience, '', '');
+    return context;
+}
 
 
 function parseOptions(argv) {
     let options = initApiOptions(1473)
+        .option('--session-secret <session secret>', 'Session secret used to sign session IDs',)
+        .option('--google-client-id <Client Id>', 'Google client ID')
+        .option('--google-client-secret <client secret>', 'Google client ID')
+
+
     appendS3Options(options);
     let opts = options
         .parse(argv)
         .opts();
-
-
     return opts;
 }
 
-async function initS3CmdLineOptions(context) {
-    const { options } = context;
-    context.options = {
-        ...options,
-        s3AccessKey: options.s3AccessKey,
-        s3SecretKey: options.s3SecretKey,
-        s3Region: options.s3Region,
-        s3Bucket: options.s3Bucket,
-    };
-
-    return context;
-}
 
 async function initResources(options) {
+
     return await initialize(options)
-        .then(initValidateOptions('mongoUrl', 'mongoUser', 'mongoPassword'))
+        .then(initValidateOptions('mongoUrl', 'mongoUser', 'mongoPassword', 'googleClientId', 'googleClientSecret',))
         .then(initS3CmdLineOptions)
         .then(initS3Client)
         .then(initMongoClient)
+        .then(initGoogleAuthClient)
 }
+
+
 
 function mapUserObject(user){
     delete user.email;
@@ -61,19 +68,6 @@ function mapUserObject(user){
 const USER_COL = 'cards';
 
 
-function allowCrossDomain(req, res, next) {
-    res.header("Access-Control-Allow-Origin", "*")
-    res.header(
-        "Access-Control-Allow-Headers",
-        "Origin, X-Requested-With, Content-Type, Accept, Authorization,idtoken"
-    );
-    if (req.method === 'OPTIONS') {
-        res.header('Access-Control-Allow-Methods', 'PUT, POST, PATCH, DELETE, GET');
-        return res.status(200).json({});
-    }
-    next();
-}
-
 class UserApp extends PayApiBaseApp {
 
     constructor(context) {
@@ -87,16 +81,22 @@ class UserApp extends PayApiBaseApp {
         const router = this.router;
 
         this.app.use(allowCrossDomain.bind(this))
+        this.app.use(session({ secret: this.options.sessionSecret, resave: false, saveUninitialized: true }));
+
+
 
 
         const invokeAsync = this.invokeAsync.bind(this);
         const checkValidationResults = PayApiBaseApp.checkValidationResults.bind(this);
-        // Convention: methods used in the express handler will have the prefix handle
-        //
-        router.post('/card/onboarding', uploadFile(5000000).any('image'), this.validateSchema('CardPost'), invokeAsync(this.handleCardOperations));
-        router.post('/card/update', uploadFile(5000000).any('image'), this.validateSchema('CardUpdate'), invokeAsync(this.handleCardOperations));
 
-        router.post('/user/login', this.validateSchema('UserLogin'), invokeAsync(this.handleLogin));
+        // router.post('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
+
+
+
+
+        router.post('/card/onboarding', uploadFile(5000000).any('image'), invokeAsync(this.handleCardOperations));
+        router.post('/card/update', uploadFile(5000000).any('image'), invokeAsync(this.handleCardOperations));
+        router.post('/user/login', invokeAsync(this.handleLogin));
         router.put('/user/resetPassword', this.validateSchema('UserPasswordReset'), invokeAsync(this.resetPassword));
         router.post('/user/verify', this.validateSchema('UserConfirmEmail'), invokeAsync(this.verifyEmail));
         router.get('/cards', invokeAsync(this.getCards));
@@ -104,34 +104,6 @@ class UserApp extends PayApiBaseApp {
     }
 
 
-    /**
-     * This function uploads image to s3.
-     * @param file
-     * @param data
-     * @param options
-     * @param log
-     * @returns filekey
-     */
-    async uploadBillToS3(file, data, options, log, s3Client)  {
-        const {s3Bucket} = options;
-        let ext = file.mimetype.split('/');
-        let fileKey = `${billScanS3KeyPrefix}/${data._id}.${ext[ext.length - 1]}`;
-        const s3Params = {
-            Key: fileKey,
-            Bucket: s3Bucket,
-            Body: file.buffer
-        };
-
-        try {
-            await s3Client.putObject(s3Params).promise();
-            log.info(`File ${fileKey} uploaded successfully to ${s3Bucket}`);
-            return fileKey;
-        }
-        catch (e) {
-            log.error(`Error while uploading files: ${e.message}`, e, {});
-            throw new Error(`${e.code || ''}-${e.message}`);
-        }
-    };
 
 
     /**
@@ -140,30 +112,24 @@ class UserApp extends PayApiBaseApp {
      *  @returns {Promise<*>}
      * */
     async handleLogin(req) {
-        const {log} = req;
+        const {log, body} = req;
         const reqId = req.id || 0;
-        const {loginId, password} = req.body;
-        const userCol = this.db.collection(USER_COL);
-        let user;
+        const { token } = body;
+        console.log("credential", token, "audience", audience)
         try {
-            user = await userCol.findOne({loginId: loginId});
+            let response = await gapiClient.verifyIdToken({ idToken: token, audience });
+            console.log("RESPONSE FROM GOOGLE HERE", response)
+            let payload = response.getPayload();
+            console.log("PAYLOAD FROM GOOGLE HERE", payload)
+
         } catch (e) {
             log.error('user login error', e, {});
             return createErrorResponse(500, 'user.login.error', 'User login error');
         }
-        
-        if (!user || password !== user.password) {
-            log.error('user');
-            return createErrorResponse(401, 'user.login.failed', 'User login failed.');
-        }
-        if(!user.active){
-            return createErrorResponse(401, 'user.not.active', 'User email not confirmed');
-        }
-        delete user.password;
-        delete user.securityQuestions;
+
         return {
             status: 200,
-            content: mapUserObject(user)
+            content: {}
         };
     }
 
@@ -177,15 +143,15 @@ class UserApp extends PayApiBaseApp {
     async insertCard(data, email, isAdmin, isPrimary) {
         const { db } = this;
         const userCol = db.collection(USER_COL);
-        const query = {
-            $or: [
-                {email}
-            ]
-        };
-        const user = await userCol.findOne(query);
-        if (user) {
-            return createErrorResponse(409, 'user.email.exists', 'This email already exists.');
-        }
+        // const query = {
+        //     $or: [
+        //         {email}
+        //     ]
+        // };
+        // const user = await userCol.findOne(query);
+        // if (user) {
+        //     return createErrorResponse(409, 'user.email.exists', 'This email already exists.');
+        // }
 
         let doc = {
             email,
@@ -213,33 +179,29 @@ class UserApp extends PayApiBaseApp {
      *  @param req
      *  @returns {Promise<*>}
      * */
-    async updateCard(userId, data, parentId) {
+    async updateCard(userId, data) {
         const { db } = this;
         const userCol = db.collection(USER_COL);
 
-        let {primaryUserId, updateParentCard,...updateData} = data
+        let {primaryUserId, _id, updateCurrentCard,...updateData} = data
         // update primary user
-        if(data.email) {
-            const query ={
-                _id : {$ne : new ObjectId(userId)},
-                email : data.email
-            };
-            let checkIfEmailExists = await userCol.findOne(query);
-            if (checkIfEmailExists) {
-                return createErrorResponse(404, 'email.already.exists', 'This email id already exists')
-            }
+        // if(data.email) {
+        //     const query ={
+        //         _id : {$ne : new ObjectId(userId)},
+        //         email : data.email
+        //     };
+        //     let checkIfEmailExists = await userCol.findOne(query);
+        //     if (checkIfEmailExists) {
+        //         return createErrorResponse(404, 'email.already.exists', 'This email id already exists')
+        //     }
+        // }
 
-            // check if email aready exists
-            // if exists, throw an error and return
-            // if not continue;
-        }
-
-        const query ={
+        const query = {
             _id : new ObjectId(userId)
         };
-        if(parentId) {
-            query.primaryUserId = new ObjectId(parentId)
-        }
+        // if(parentId) {
+        //     query.primaryUserId = new ObjectId(parentId)
+        // }
 
         console.log("query here", query)
         const updateOptions = {
@@ -257,7 +219,6 @@ class UserApp extends PayApiBaseApp {
         if (!writeResult) {
             return createErrorResponse(404, 'card.not.found', 'Could not identify card to update');
         }
-        console.log("write result of findoneandupdate", writeResult)
         let doc = writeResult;
         return doc;
     }
@@ -281,7 +242,7 @@ class UserApp extends PayApiBaseApp {
         let fileKey ='';
 
         try {
-            let {primaryUserId, childId, updateParentCard = false, ...body} = doc;
+            let {primaryUserId, _id, updateCurrentCard = false, ...body} = doc;
 
             // need to refreactor this part, either delete file if some error occured/do update ioperation to update the url
             if(files && files.length) {
@@ -300,11 +261,11 @@ class UserApp extends PayApiBaseApp {
             console.log("doc here", body)
 
 
-            if(primaryUserId && childId) {
-                console.log("==================Updating child for primary User=====================", primaryUserId, childId)
+            if(_id && updateCurrentCard) {
+                console.log("==================Updating user=====================", _id)
                 // update child
                 try {
-                    let result =  await this.updateCard(childId, doc, primaryUserId);
+                    let result =  await this.updateCard(_id, doc);
                     return {
                         status: 200,
                         content: result
@@ -314,27 +275,11 @@ class UserApp extends PayApiBaseApp {
                     console.log("error here", err)
                 }
             }
-            // Case : Edit primary User
-            if(primaryUserId && updateParentCard) {
-                console.log("=========Updating primary user Id=============", {updateParentCard, primaryUserId})
-                try {
-                    let result =  await this.updateCard(primaryUserId, doc);
-                    return {
-                        status: 200,
-                        content: result
-                    };
-
-                } catch(err) {
-                    console.log("error here", err)
-                }
-
-            }
-            // Case : Add child User by primary User
-            if(primaryUserId) {
-                console.log("=========Add Child=============", primaryUserId)
+            if(_id) {
+                console.log("=========Add Child=============", _id)
 
                 // add child
-                body.primaryUserId = new ObjectId(primaryUserId);
+                body.primaryUserId = new ObjectId(_id);
                 body.isChild = true;
                 let result = await this.insertCard(body, body.email, false, false);
                 result.childUserId = result._id;
