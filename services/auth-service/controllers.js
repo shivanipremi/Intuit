@@ -425,11 +425,17 @@ class UserApp extends PayApiBaseApp {
         let users = [];
         try {
             let query ={};
+
+            if(primaryUserId) {
+                query = {
+                    $or: [
+                        { _id: new ObjectId(primaryUserId) }, // Matching documents with _id equal to primaryUserId
+                        { primaryUserId: new ObjectId(primaryUserId) } // Matching documents with primaryUserId field equal to primaryUserId
+                    ]
+                };
+            }
             if(id) {
                 query._id = new ObjectId(id);
-            }
-            if(primaryUserId) {
-                query.primaryUserId = new ObjectId(primaryUserId)
             }
             console.log("query", query)
             users = await userCol.find(query).sort({ modifiedOn: -1 }).toArray();
