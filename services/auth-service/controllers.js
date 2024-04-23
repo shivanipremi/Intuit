@@ -275,19 +275,24 @@ class UserApp extends PayApiBaseApp {
                     console.log("error here", err)
                 }
             }
-            if(_id) {
-                console.log("=========Add Child=============", _id)
+            if(primaryUserId) {
+                console.log("=========Add Child=============", primaryUserId);
+                if(!primaryUserId) {
+                    return createErrorResponse(422, 'user.save.error', 'Primary User Id not present.');
+                }
+
 
                 // add child
-                body.primaryUserId = new ObjectId(_id);
+                body.primaryUserId = new ObjectId(primaryUserId);
                 body.isChild = true;
                 let result = await this.insertCard(body, body.email, false, false);
-                result.childUserId = result._id;
                 return {
                     status: 200,
                     content: result
                 };
             }
+
+            console.log("Insert Primary Card")
             // Case : Add primary User
             let isAdmin = true, isPrimary = true;
             let result = await this.insertCard(body, body.email, isAdmin, isPrimary);
