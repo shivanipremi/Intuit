@@ -84,26 +84,15 @@ class UserApp extends PayApiBaseApp {
         this.app.use(session({ secret: this.options.sessionSecret, resave: false, saveUninitialized: true }));
 
 
-
-
         const invokeAsync = this.invokeAsync.bind(this);
         const checkValidationResults = PayApiBaseApp.checkValidationResults.bind(this);
-
-        // router.post('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
-
-
-
 
         router.post('/card/onboarding', uploadFile(5000000).any('image'), invokeAsync(this.handleCardOperations));
         router.post('/card/update', uploadFile(5000000).any('image'), invokeAsync(this.handleCardOperations));
         router.post('/user/login', invokeAsync(this.handleLogin));
-        router.put('/user/resetPassword', this.validateSchema('UserPasswordReset'), invokeAsync(this.resetPassword));
-        router.post('/user/verify', this.validateSchema('UserConfirmEmail'), invokeAsync(this.verifyEmail));
         router.get('/cards', invokeAsync(this.getCards));
 
     }
-
-
 
 
     /**
@@ -114,23 +103,59 @@ class UserApp extends PayApiBaseApp {
     async handleLogin(req) {
         const {log, body} = req;
         const reqId = req.id || 0;
-        const { token } = body;
+        const userCol = this.db.collection(USER_COL);
+        const { token, primaryUserId } = body;
         console.log("credential", token, "audience", audience)
         try {
             let response = await gapiClient.verifyIdToken({ idToken: token, audience });
-            console.log("RESPONSE FROM GOOGLE HERE", response)
+            console.log("RESPONSEl FROM GOOGLE HERE", response)
             let payload = response.getPayload();
             console.log("PAYLOAD FROM GOOGLE HERE", payload)
+
+            if(payload && payload.email) {
+                if(primaryUserId) {
+                    let query = {
+                        primaryUserId : new ObjectId(primaryUserId)
+                    }
+                    let user = await userCol.findOne(query, {email : 1});
+                    if(!user  || user.email !== payload.email ) {
+                        return createErrorResponse(500, 'user.email.mismatch', 'Onboarding email is different from signup email');
+                    }
+                }
+
+                let query = {}
+                if(primaryUserId) {
+                    query.primaryUserId = new ObjectId(primaryUserId);
+                } else {
+                    query.email = payload.email
+                }
+                let updateOptions = {
+                    $set : {
+                        loginAt : new Date()
+                    }
+                }
+                let user = await userCol.findOneAndUpdate(query, updateOptions, { returnDocument: "after" });
+                console.log("üser here->>>>>>>>>>>>>>>>>from db here", user);
+
+                // create jwt
+                return {
+                    status: 200,
+                    content: {
+                        jwtToken: '',
+                        userDetails: user
+                    }
+                };
+
+            } else {
+                return createErrorResponse(500, 'user.login.error', 'Error getting response from token');
+            }
 
         } catch (e) {
             log.error('user login error', e, {});
             return createErrorResponse(500, 'user.login.error', 'User login error');
         }
 
-        return {
-            status: 200,
-            content: {}
-        };
+
     }
 
 
@@ -173,17 +198,18 @@ class UserApp extends PayApiBaseApp {
         return doc;
     }
 
-
     /**
      * function to update card details
      *  @param req
      *  @returns {Promise<*>}
      * */
     async updateCard(userId, data) {
+        console.log("incoming data", data)
         const { db } = this;
         const userCol = db.collection(USER_COL);
 
-        let {primaryUserId, _id, updateCurrentCard,...updateData} = data
+        let {primaryUserId, _id, updateCurrentCard,...updateData} = data;
+        console.log("update data ", updateData)
         // update primary user
         // if(data.email) {
         //     const query ={
@@ -212,6 +238,7 @@ class UserApp extends PayApiBaseApp {
                 ...updateData
             }
         };
+        console.log("update options", updateOptions)
         const writeResult = await userCol.findOneAndUpdate(query, updateOptions, {
             returnDocument: 'after'
         });
@@ -222,13 +249,13 @@ class UserApp extends PayApiBaseApp {
         let doc = writeResult;
         return doc;
     }
+
     /**
      * Insert/Update Parent and Child Cards.
      * @param req
      * @returns {Promise<*>}
      */
     async handleCardOperations(req) {
-
         const {files } = req;
         const { s3Client, log, options } = this;
         const { s3Bucket } = options;
@@ -242,9 +269,7 @@ class UserApp extends PayApiBaseApp {
         let fileKey ='';
 
         try {
-            let {primaryUserId, _id, updateCurrentCard = false, ...body} = doc;
-
-            // need to refreactor this part, either delete file if some error occured/do update ioperation to update the url
+            // upload files
             if(files && files.length) {
                 for(let file of files) {
                     let ext = file.mimetype.split('/');
@@ -254,9 +279,14 @@ class UserApp extends PayApiBaseApp {
                     if(!uploadResponse) {
                         return createErrorResponse(500, 'image.upload.error', 'Error in uploading image.');
                     }
-                    body[fileName] = `${options.s3Url}/${fileKey}`;
+                    doc[fileName] = `${options.s3Url}/${fileKey}`;
                 }
             }
+
+            let {primaryUserId, _id, updateCurrentCard = false, ...body} = doc;
+
+            // need to refreactor this part, either delete file if some error occured/do update ioperation to update the url
+
 
             console.log("doc here", body)
 
@@ -307,116 +337,6 @@ class UserApp extends PayApiBaseApp {
         }
     }
 
-    /**
-     * Reset user password.
-     * @param req
-     * @returns {Promise<*>}
-     */
-    async resetPassword(req) {
-        const { log } = req;
-        const userCol = this.db.collection(USER_COL);
-        // Assume schema validation already happened before
-        let doc = req.body;
-        try {
-            let {loginId, password, securityQuestions} = doc;
-            let query = {loginId, active: {$in: [true]}};
-            const userData = await userCol.findOne(query);
-
-            if (!userData) {
-                return createErrorResponse(404, 'user.not.found', 'User not found');
-            }
-            for (let securityQuestion of securityQuestions) {
-                let question = userData.securityQuestions.find(q => q.id === securityQuestion.id);
-                if (!question) {
-                    return createErrorResponse(422, 'securityQuestion.id.not.found', `Security Question with id ${securityQuestion.id} not found for TLA`);
-                }
-                if (question.answer.trim().toLowerCase() !== securityQuestion.answer.trim().toLowerCase()) {
-                    return createErrorResponse(401, 'user.invalid.security.answer', `Invalid Security answer`);
-                }
-            }
-            query = {
-                loginId, active: {$in: [true, false]}
-            };
-
-            const updateOptions = {
-                $set: {
-                    password, // update all fields sent
-                    passwordModifiedOn: new Date(),
-                    modifiedOn: new Date()
-                    // modifiedBy: issuer
-                }
-            };
-            const writeResult = await userCol.updateOne(query, updateOptions);
-            if (!writeResult || writeResult.acknowledged !== true || writeResult.modifiedCount === 0) {
-                return createErrorResponse(404, 'user.not.found', 'User not found');
-            }
-            doc = userData;
-            await this.sendEmail(log, doc.email, {supportEmail: (req.body.supportEmail || this.options.supportEmail)}, 'mobile-ipn-password-reset', 'Account password reset');
-        } catch (err) {
-            log.error('Error updating user password', err, {});
-            return createErrorResponse(500, 'user.update.password.error', 'Error updating password of User');
-        }
-
-        log.info(`Password updated`);
-        return {
-            status: 200,
-            content: mapUserObject(doc)
-        };
-    }
-
-
-    /**
-     * Change user password.
-     * @param req
-     * @returns {Promise<*>}
-     */
-    async verifyEmail(req) {
-        const { log } = req;
-        const userCol = this.db.collection(USER_COL);
-        let doc = req.body;
-        // Assume schema validation already happened before
-        try {
-            let {loginId, token} = doc;
-            const query = {loginId, active: {$in: [false]}};
-            const updateOptions = {
-                $set: {
-                    active: true,
-                    // modifiedBy: issuer,
-                    modifiedOn: new Date()
-                },
-                $unset: {
-                    confirmToken: 1,
-                    confirmEmailAttempts: 1
-                }
-            };
-            let user = await userCol.findOne(query);
-            if (!user) {
-                return createErrorResponse(404, 'user.not.found', 'User not found by loginId')
-            }
-            if(user.confirmEmailAttempts >= this.options.confirmEmailAttempts){
-                return createErrorResponse(403, 'confirm.email.attempts.exceeded', 'Max number of attempts to confirm email exceeded');
-            }
-            if (user.confirmToken !== token) {
-                await userCol.findOneAndUpdate(query, {$inc: {confirmEmailAttempts : 1}});
-                return createErrorResponse(422, 'confirm.email.token.mismatch', 'Incorrect value of confirm email token');
-            }
-            const writeResult = await userCol.findOneAndUpdate(query, updateOptions, {
-                returnDocument: 'after'
-            });
-            if (writeResult.ok !== 1 || writeResult.lastErrorObject.n === 0) {
-                return createErrorResponse(404, 'user.not.found', 'Could not identify user to update');
-            }
-            doc = writeResult.value;
-        } catch (err) {
-            // FIXME: Identify mongo exceptions that we should return specific errors.
-            log.error('user confirm email error', err, {});
-            return createErrorResponse(500, 'user.confirmEmail.error', 'Error confirming user email');
-        }
-        return {
-            status: 200,
-            content: mapUserObject(doc)
-        };
-    }
 
     /**
     * Get user by Id
