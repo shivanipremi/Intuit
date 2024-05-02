@@ -4,13 +4,14 @@ const
     {
         initApiOptions, createErrorResponse, PayApiBaseApp, initMongoClient,
     } = require('../../lib/services/base-api-ms'),
-    { initialize, initValidateOptions, allowCrossDomain } = require('../../lib/services/service-base-v2'),
+    { initialize, initValidateOptions, allowCrossDomain, parseBooleanParam } = require('../../lib/services/service-base-v2'),
     md5 = require('md5'),
     userConfig = require('../../lib/schema/user-config'),
     {ObjectId} = require('mongodb'),
     { OAuth2Client } = require('google-auth-library'),
     {google} = require('googleapis'),
-     session = require('express-session'),
+    JWTUtil = require('../../lib/jwt-util'),
+    session = require('express-session'),
 {   appendS3Options, initS3Client, uploadFile, putJSONObjectAsync, initS3CmdLineOptions} = require('../../lib/s3-utils'),
 // constants = require('./static/user-constants'),
     asMain = (require.main === module);
@@ -30,7 +31,7 @@ function parseOptions(argv) {
         .option('--session-secret <session secret>', 'Session secret used to sign session IDs',)
         .option('--google-client-id <Client Id>', 'Google client ID')
         .option('--google-client-secret <client secret>', 'Google client ID')
-
+        .option('--validate-jwt <validate-jwt>', 'Validate JWT - true/false', parseBooleanParam, false)
 
     appendS3Options(options);
     let opts = options
@@ -72,8 +73,12 @@ class UserApp extends PayApiBaseApp {
 
     constructor(context) {
         super(context);
+        const {log, options} = context;
         this.context = context;
+
         this.s3Client = context.s3Client;
+        this.jwtUtil = new JWTUtil(log, JWTUtil.prepareJwtOptions(options));
+
     }
 
     registerRoutes() {
@@ -85,12 +90,14 @@ class UserApp extends PayApiBaseApp {
 
 
         const invokeAsync = this.invokeAsync.bind(this);
+        const validateJwt = this.jwtUtil.validateJwt.bind(this)
         const checkValidationResults = PayApiBaseApp.checkValidationResults.bind(this);
 
         router.post('/card/onboarding', uploadFile(5000000).any('image'), invokeAsync(this.handleCardOperations));
         router.post('/card/update', uploadFile(5000000).any('image'), invokeAsync(this.handleCardOperations));
         router.post('/user/login', invokeAsync(this.handleLogin));
         router.get('/cards', invokeAsync(this.getCards));
+        router.get("/cardDetails", validateJwt, invokeAsync(this.getCards))
 
     }
 
@@ -108,8 +115,11 @@ class UserApp extends PayApiBaseApp {
         console.log("credential", token, "audience", audience)
         try {
             let response = await gapiClient.verifyIdToken({ idToken: token, audience });
-            console.log("RESPONSEl FROM GOOGLE HERE", response)
+            // console.log("RESPONSEl FROM GOOGLE HERE", response)
             let payload = response.getPayload();
+            // let payload = {
+            //     "email":"princekumar7b@gmail.com"
+            // }
             console.log("PAYLOAD FROM GOOGLE HERE", payload)
 
             if(payload && payload.email) {
@@ -136,12 +146,17 @@ class UserApp extends PayApiBaseApp {
                 }
                 let user = await userCol.findOneAndUpdate(query, updateOptions, { returnDocument: "after" });
                 console.log("üser here->>>>>>>>>>>>>>>>>from db here", user);
+                let jwtPayload = {
+                    primaryUserId: user._id
+                }
+
+                const jwt = this.jwtUtil.encode(jwtPayload);
 
                 // create jwt
                 return {
                     status: 200,
                     content: {
-                        jwtToken: '',
+                        jwtToken: jwt,
                         userDetails: user
                     }
                 };
@@ -168,15 +183,15 @@ class UserApp extends PayApiBaseApp {
     async insertCard(data, email, isAdmin, isPrimary) {
         const { db } = this;
         const userCol = db.collection(USER_COL);
-        // const query = {
-        //     $or: [
-        //         {email}
-        //     ]
-        // };
-        // const user = await userCol.findOne(query);
-        // if (user) {
-        //     return createErrorResponse(409, 'user.email.exists', 'This email already exists.');
-        // }
+        const query = {
+            $or: [
+                {email}
+            ]
+        };
+        const user = await userCol.findOne(query);
+        if (user) {
+            return createErrorResponse(409, 'user.email.exists', 'This email already exists.');
+        }
 
         let doc = {
             email,
@@ -211,16 +226,16 @@ class UserApp extends PayApiBaseApp {
         let {primaryUserId, _id, updateCurrentCard,...updateData} = data;
         console.log("update data ", updateData)
         // update primary user
-        // if(data.email) {
-        //     const query ={
-        //         _id : {$ne : new ObjectId(userId)},
-        //         email : data.email
-        //     };
-        //     let checkIfEmailExists = await userCol.findOne(query);
-        //     if (checkIfEmailExists) {
-        //         return createErrorResponse(404, 'email.already.exists', 'This email id already exists')
-        //     }
-        // }
+        if(data.email) {
+            const query ={
+                _id : {$ne : new ObjectId(userId)},
+                email : data.email
+            };
+            let checkIfEmailExists = await userCol.findOne(query);
+            if (checkIfEmailExists) {
+                return createErrorResponse(404, 'email.already.exists', 'This email id already exists')
+            }
+        }
 
         const query = {
             _id : new ObjectId(userId)
@@ -322,7 +337,7 @@ class UserApp extends PayApiBaseApp {
                 };
             }
 
-            console.log("Insert Primary Card")
+            console.log("===================Insert Primary Card=====================")
             // Case : Add primary User
             let isAdmin = true, isPrimary = true;
             let result = await this.insertCard(body, body.email, isAdmin, isPrimary);
@@ -344,9 +359,20 @@ class UserApp extends PayApiBaseApp {
     * @returns {Promise <*>}
     */
     async getCards(req){
-        const { log } = req;
+        const { log, headers } = req;
+        let { id, primaryUserId } = req.query;
+        if(headers.jwtToken) {
+            let payload = this.jwtUtil.decode(headers.jwtToken);
+            primaryUserId = payload.primaryUserId;
+            console.log("primaryUserId from jwt token", primaryUserId)
+
+        }
+        console.log("query", req.query)
         const userCol = this.db.collection(USER_COL);
-        const { id, primaryUserId } = req.query;
+        if(!id && !primaryUserId) {
+            log.error("Either id/primaryUserId should be present in the request");
+            return createErrorResponse(400, 'card.id.primaryUserId.missing', 'Either id/primaryUserId should be present in the request');
+        }
         let users = [];
         try {
             let query ={};
