@@ -67,6 +67,7 @@ function mapUserObject(user){
 }
 
 const USER_COL = 'cards';
+const USER_PROFILE_COL = 'users'
 
 
 class UserApp extends PayApiBaseApp {
@@ -94,11 +95,12 @@ class UserApp extends PayApiBaseApp {
         const checkValidationResults = PayApiBaseApp.checkValidationResults.bind(this);
 
         router.post('/card/onboarding', uploadFile(5000000).any('image'), invokeAsync(this.handleCardOperations));
-        router.post('/card/update', uploadFile(5000000).any('image'), invokeAsync(this.handleCardOperations));
+        router.post('/card/update', validateJwt, uploadFile(5000000).any('image'), invokeAsync(this.handleCardOperations));
         router.post('/user/login', invokeAsync(this.handleLogin));
         router.get('/cards', invokeAsync(this.getCards));
         router.get("/cardDetails", validateJwt, invokeAsync(this.getCards))
-
+        router.get("/profile", validateJwt, invokeAsync(this.getProfile))
+        router.post('/profile/update', validateJwt, uploadFile(5000000).any('image'), invokeAsync(this.updateProfile));
     }
 
 
@@ -240,9 +242,6 @@ class UserApp extends PayApiBaseApp {
         const query = {
             _id : new ObjectId(userId)
         };
-        // if(parentId) {
-        //     query.primaryUserId = new ObjectId(parentId)
-        // }
 
         console.log("query here", query)
         const updateOptions = {
@@ -342,6 +341,19 @@ class UserApp extends PayApiBaseApp {
             let isAdmin = true, isPrimary = true;
             let result = await this.insertCard(body, body.email, isAdmin, isPrimary);
             result.primaryUserId = result._id;
+
+            // Since, this is a primary user, create a profile
+
+            const { db } = this;
+            const userProfileCol = db.collection(USER_PROFILE_COL);
+
+            let profile = result;
+            profile.primaryUserId = new ObjectId(result._id)
+            const insertedProfile = await userProfileCol.insertOne(profile, {});
+            if (insertedProfile.acknowledged !== true || insertedProfile.insertedId == null) {
+                return createErrorResponse(500, 'user..profile.save.error', 'Error creating user profile');
+            }
+
             return {
                 status: 200,
                 content: result
@@ -363,9 +375,9 @@ class UserApp extends PayApiBaseApp {
         let { id, primaryUserId } = req.query;
         if(headers.jwtToken) {
             let payload = this.jwtUtil.decode(headers.jwtToken);
+            console.log("<<<<------------------payload--------------->>>>", payload);
             primaryUserId = payload.primaryUserId;
             console.log("primaryUserId from jwt token", primaryUserId)
-
         }
         console.log("query", req.query)
         const userCol = this.db.collection(USER_COL);
@@ -403,6 +415,239 @@ class UserApp extends PayApiBaseApp {
             return createErrorResponse(500, 'user.find.error', 'Error finding user');
         }
     }
+
+    /**
+     * Handle card operations, add and update child card, add and update primary card
+     * @param req
+     * @returns {Promise <*>}
+     */
+    async handleCardOperations(req) {
+        const {files } = req;
+        const { s3Client, log, options } = this;
+        const { s3Bucket } = options;
+        let s3Options = { bucket: s3Bucket };
+
+        const chars = [..."ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"];
+        let fileToken = [...Array(8)].map(i=>chars[Math.random()*chars.length|0]).join``;
+
+        // Assume schema validation already happened before
+        let doc = req.body;
+        let fileKey ='';
+
+        try {
+            // upload files
+            if(files && files.length) {
+                for(let file of files) {
+                    let ext = file.mimetype.split('/');
+                    let fileName = file.fieldname;
+                    fileKey = `user/${fileToken}.${ext[ext.length - 1]}`;
+                    let uploadResponse = await putJSONObjectAsync(s3Options, fileKey, file.buffer, file.mimetype, s3Client, log);
+                    if(!uploadResponse) {
+                        return createErrorResponse(500, 'image.upload.error', 'Error in uploading image.');
+                    }
+                    doc[fileName] = `${options.s3Url}/${fileKey}`;
+                }
+            }
+
+            let {primaryUserId, _id, updateCurrentCard = false, ...body} = doc;
+
+            // need to refreactor this part, either delete file if some error occured/do update ioperation to update the url
+
+
+            console.log("doc here", body)
+
+
+            if(_id && updateCurrentCard) {
+                console.log("==================Updating user=====================", _id)
+                // update child
+                try {
+                    let result =  await this.updateCard(_id, doc);
+                    return {
+                        status: 200,
+                        content: result
+                    };
+
+                } catch(err) {
+                    console.log("error here", err)
+                }
+            }
+            if(primaryUserId) {
+                console.log("=========Add Child=============", primaryUserId);
+                if(!primaryUserId) {
+                    return createErrorResponse(422, 'user.save.error', 'Primary User Id not present.');
+                }
+
+
+                // add child
+                body.primaryUserId = new ObjectId(primaryUserId);
+                body.isChild = true;
+                let result = await this.insertCard(body, body.email, false, false);
+                return {
+                    status: 200,
+                    content: result
+                };
+            }
+
+            console.log("===================Insert Primary Card=====================")
+            // Case : Add primary User
+            let isAdmin = true, isPrimary = true;
+            let result = await this.insertCard(body, body.email, isAdmin, isPrimary);
+            result.primaryUserId = result._id;
+
+            // Since, this is a primary user, create a profile
+
+            const { db } = this;
+            const userProfileCol = db.collection(USER_PROFILE_COL);
+
+            let profile = result;
+            profile.primaryUserId = new ObjectId(result._id);
+            const insertedProfile = await userProfileCol.insertOne(profile, {});
+            if (insertedProfile.acknowledged !== true || insertedProfile.insertedId == null) {
+                return createErrorResponse(500, 'user..profile.save.error', 'Error creating user profile');
+            }
+
+            return {
+                status: 200,
+                content: result
+            };
+        } catch (err) {
+            log.error('user save error', err, {});
+            return createErrorResponse(500, 'user.save.error', 'Error creating user');
+        }
+    }
+
+
+    /**
+     * Update primary Card Profile
+     * @param req
+     * @returns {Promise <*>}
+     */
+    async updateProfile(req) {
+
+        const {files, log, headers} = req;
+        const { s3Client, options, db } = this;
+        const userProfileCol = db.collection(USER_PROFILE_COL);
+        const { s3Bucket } = options;
+        let s3Options = { bucket: s3Bucket };
+        let idToUpdate;
+
+        // Assume schema validation already happened before
+        let doc = req.body;
+        let fileKey ='';
+
+        try {
+            if(!headers.jwtToken) {
+                return createErrorResponse(400, 'jwt.token.not.prcoessed', 'JWT token was not processed in the request');
+            }
+
+            let payload = this.jwtUtil.decode(headers.jwtToken);
+            console.log("<<<<------------------payload--------------->>>>", payload);
+            idToUpdate = payload.primaryUserId;
+            console.log("primaryUserId from jwt token", idToUpdate)
+
+            // upload files
+            if(files && files.length) {
+                for(let file of files) {
+                    let ext = file.mimetype.split('/');
+                    let fileName = file.fieldname;
+                    fileKey = `user/${fileToken}.${ext[ext.length - 1]}`;
+                    let uploadResponse = await putJSONObjectAsync(s3Options, fileKey, file.buffer, file.mimetype, s3Client, log);
+                    if(!uploadResponse) {
+                        return createErrorResponse(500, 'image.upload.error', 'Error in uploading image.');
+                    }
+                    doc[fileName] = `${options.s3Url}/${fileKey}`;
+                }
+            }
+
+            let {primaryUserId, _id, updateCurrentCard = false, ...body} = doc;
+
+            console.log("==========body=========", body)
+
+
+            if(body.email) {
+                const query = {
+                    _id: {$ne: new ObjectId(idToUpdate)},
+                    email: body.email
+                };
+                let checkIfEmailExists = await userProfileCol.findOne(query);
+                if (checkIfEmailExists) {
+                    return createErrorResponse(404, 'email.already.exists', 'This email id already exists')
+                }
+            }
+
+            let query = {
+                primaryUserId : new ObjectId(idToUpdate)
+            }
+
+            console.log("query here", query)
+            const updateOptions = {
+                $set: {
+                    active: true,
+                    modifiedBy: 'demo',
+                    modifiedOn: new Date(),
+                    ...body
+                }
+            };
+            console.log("update options", updateOptions)
+            const writeResult = await userProfileCol.findOneAndUpdate(query, updateOptions, {
+                returnDocument: 'after'
+            });
+            console.log("write result", writeResult)
+            if (!writeResult) {
+                return createErrorResponse(404, 'profile.not.found', 'Could not identify prfile to update');
+            }
+            let result = writeResult;
+
+            return {
+                status: 200,
+                content: result
+            };
+        } catch (err) {
+            log.error('user save error', err, {});
+            return createErrorResponse(500, 'user.save.error', 'Error creating user');
+        }
+    }
+
+
+    /**
+     * Get profile by token
+     * @param req
+     * @returns {Promise <*>}
+     */
+    async getProfile(req){
+        const { log, headers } = req;
+
+        let payload = this.jwtUtil.decode(headers.jwtToken);
+        console.log("<<<<------------------payload--------------->>>>", payload);
+        let primaryUserId = payload.primaryUserId;
+        console.log("primaryUserId from jwt token", primaryUserId)
+
+        const userProfileCol = this.db.collection(USER_PROFILE_COL);
+        if(!primaryUserId) {
+            log.error("primaryUserId should be present in the request");
+            return createErrorResponse(400, 'profile.primaryUserId.missing', 'primaryUserId should be present in the request');
+        }
+        try {
+            let query = {
+                primaryUserId : new ObjectId(primaryUserId)
+            };
+
+            console.log("query", query)
+            let users = await userProfileCol.find(query).sort({ modifiedOn: -1 }).toArray();
+            // if(!user){
+            //     log.error(`user not found by id ${id}`);
+            //     return createErrorResponse(404, 'user.not.found', 'User not found by given id');
+            // }
+            return {
+                status: 200,
+                content: users
+            }
+        } catch (e) {
+            log.error(`error finding user`, e, {});
+            return createErrorResponse(500, 'user.profile.find.error', 'Error finding user profile');
+        }
+    }
+
 
 }
 
