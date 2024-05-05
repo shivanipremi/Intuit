@@ -442,7 +442,7 @@ class UserApp extends PayApiBaseApp {
             console.log("profile here",profile)
             const insertedProfile = await userProfileCol.insertOne(profile, {});
             if (insertedProfile.acknowledged !== true || insertedProfile.insertedId == null) {
-                return createErrorResponse(500, 'user..profile.save.error', 'Error creating user profile');
+                return createErrorResponse(500, 'user.profile.save.error', 'Error creating user profile');
             }
 
             return {
