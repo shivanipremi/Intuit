@@ -328,9 +328,7 @@ class UserApp extends PayApiBaseApp {
         }
         let users = [];
         try {
-            let query ={
-                type
-            };
+            let query ={};
 
             if(primaryUserId) {
                 query = {
@@ -343,6 +341,7 @@ class UserApp extends PayApiBaseApp {
             if(id) {
                 query._id = new ObjectId(id);
             }
+            query.type = type;
             console.log("query", query)
             users = await userCol.find(query).sort({ modifiedOn: -1 }).toArray();
 
