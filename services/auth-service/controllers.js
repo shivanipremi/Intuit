@@ -340,6 +340,8 @@ class UserApp extends PayApiBaseApp {
             profile.primaryUserId = new ObjectId(result._id);
             profile.defaultCard = new ObjectId(result._id);
             profile.defaultCardType = defaultCardType;
+
+            console.log("creating Profile...", profile)
             const insertedProfile = await userProfileCol.insertOne(profile, {});
             if (insertedProfile.acknowledged !== true || insertedProfile.insertedId == null) {
                 return createErrorResponse(500, 'user..profile.save.error', 'Error creating user profile');
