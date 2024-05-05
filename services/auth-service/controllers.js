@@ -5,15 +5,12 @@ const
         initApiOptions, createErrorResponse, PayApiBaseApp, initMongoClient,
     } = require('../../lib/services/base-api-ms'),
     { initialize, initValidateOptions, allowCrossDomain, parseBooleanParam } = require('../../lib/services/service-base-v2'),
-    md5 = require('md5'),
     userConfig = require('../../lib/schema/user-config'),
     {ObjectId} = require('mongodb'),
     { OAuth2Client } = require('google-auth-library'),
-    {google} = require('googleapis'),
     JWTUtil = require('../../lib/jwt-util'),
     session = require('express-session'),
 {   appendS3Options, initS3Client, uploadFile, putJSONObjectAsync, initS3CmdLineOptions} = require('../../lib/s3-utils'),
-// constants = require('./static/user-constants'),
     asMain = (require.main === module);
 
 let gapiClient;
@@ -52,22 +49,12 @@ async function initResources(options) {
 }
 
 
-
-function mapUserObject(user){
-    delete user.email;
-    delete user.modifiedOn;
-    delete user.createdOn;
-    delete user.modifiedBy;
-    delete user.createdBy;
-    delete user.active;
-    delete user.issuer;
-    delete user.confirmToken;
-    delete user.confirmEmailAttempts;
-    return user;
-}
-
 const USER_COL = 'cards';
-const USER_PROFILE_COL = 'users'
+const USER_PROFILE_COL = 'users';
+const USER_CONTACTS_COL = 'contacts';
+const USER_LEADS_COL = 'leads'
+
+
 
 
 class UserApp extends PayApiBaseApp {
@@ -89,19 +76,23 @@ class UserApp extends PayApiBaseApp {
         this.app.use(allowCrossDomain.bind(this))
         this.app.use(session({ secret: this.options.sessionSecret, resave: false, saveUninitialized: true }));
 
-
         const invokeAsync = this.invokeAsync.bind(this);
-        const validateJwt = this.jwtUtil.validateJwt.bind(this)
+        const validateJwt = this.jwtUtil.validateJwt.bind(this);
         const checkValidationResults = PayApiBaseApp.checkValidationResults.bind(this);
 
         router.post('/card/onboarding', uploadFile(5000000).any('image'), invokeAsync(this.handleCardOperations));
         router.post('/card/update', validateJwt, uploadFile(5000000).any('image'), invokeAsync(this.handleCardOperations));
         router.post('/user/login', invokeAsync(this.handleLogin));
-        router.get('/cards', invokeAsync(this.getCards));
+        router.get('/cards', invokeAsync(this.getDefaultCard));
         router.get("/cardDetails", validateJwt, invokeAsync(this.getCards))
         router.get("/profile", validateJwt, invokeAsync(this.getProfile))
         router.post('/profile/update', validateJwt, uploadFile(5000000).any('image'), invokeAsync(this.updateProfile));
+        router.post('/contact', validateJwt, invokeAsync(this.saveAnlayticsData));
+        router.get("/contacts", validateJwt, invokeAsync(this.getAnalyticsData))
+
     }
+
+
 
 
     /**
@@ -117,11 +108,8 @@ class UserApp extends PayApiBaseApp {
         console.log("credential", token, "audience", audience)
         try {
             let response = await gapiClient.verifyIdToken({ idToken: token, audience });
-            // console.log("RESPONSEl FROM GOOGLE HERE", response)
             let payload = response.getPayload();
-            // let payload = {
-            //     "email":"princekumar7b@gmail.com"
-            // }
+
             console.log("PAYLOAD FROM GOOGLE HERE", payload)
 
             if(payload && payload.email) {
@@ -131,7 +119,7 @@ class UserApp extends PayApiBaseApp {
                     }
                     let user = await userCol.findOne(query, {email : 1});
                     if(!user  || user.email !== payload.email ) {
-                        return createErrorResponse(500, 'user.email.mismatch', 'Onboarding email is different from signup email');
+                        return createErrorResponse(400, 'user.email.mismatch', 'Onboarding email is different from signup email');
                     }
                 }
 
@@ -185,14 +173,17 @@ class UserApp extends PayApiBaseApp {
     async insertCard(data, email, isAdmin, isPrimary) {
         const { db } = this;
         const userCol = db.collection(USER_COL);
-        const query = {
-            $or: [
-                {email}
-            ]
-        };
-        const user = await userCol.findOne(query);
-        if (user) {
-            return createErrorResponse(409, 'user.email.exists', 'This email already exists.');
+
+        if(isPrimary) {
+            const query = {
+                $or: [
+                    {email}
+                ]
+            };
+            const user = await userCol.findOne(query);
+            if (user) {
+                return createErrorResponse(409, 'user.email.exists', 'This email already exists.');
+            }
         }
 
         let doc = {
@@ -220,6 +211,7 @@ class UserApp extends PayApiBaseApp {
      *  @param req
      *  @returns {Promise<*>}
      * */
+
     async updateCard(userId, data) {
         console.log("incoming data", data)
         const { db } = this;
@@ -228,16 +220,16 @@ class UserApp extends PayApiBaseApp {
         let {primaryUserId, _id, updateCurrentCard,...updateData} = data;
         console.log("update data ", updateData)
         // update primary user
-        if(data.email) {
-            const query ={
-                _id : {$ne : new ObjectId(userId)},
-                email : data.email
-            };
-            let checkIfEmailExists = await userCol.findOne(query);
-            if (checkIfEmailExists) {
-                return createErrorResponse(404, 'email.already.exists', 'This email id already exists')
-            }
-        }
+        // if(data.email) {
+        //     const query ={
+        //         _id : {$ne : new ObjectId(userId)},
+        //         email : data.email
+        //     };
+        //     let checkIfEmailExists = await userCol.findOne(query);
+        //     if (checkIfEmailExists) {
+        //         return createErrorResponse(404, 'email.already.exists', 'This email id already exists')
+        //     }
+        // }
 
         const query = {
             _id : new ObjectId(userId)
@@ -258,7 +250,7 @@ class UserApp extends PayApiBaseApp {
         });
         console.log("write result", writeResult)
         if (!writeResult) {
-            return createErrorResponse(404, 'card.not.found', 'Could not identify card to update');
+            return createErrorResponse(400, 'card.not.found', 'Could not identify card to update');
         }
         let doc = writeResult;
         return doc;
@@ -297,7 +289,7 @@ class UserApp extends PayApiBaseApp {
                 }
             }
 
-            let {primaryUserId, _id, updateCurrentCard = false, ...body} = doc;
+            let {primaryUserId, _id, updateCurrentCard = false, defaultCardType = 'card-design-1', ...body} = doc;
 
             // need to refreactor this part, either delete file if some error occured/do update ioperation to update the url
 
@@ -321,9 +313,6 @@ class UserApp extends PayApiBaseApp {
             }
             if(primaryUserId) {
                 console.log("=========Add Child=============", primaryUserId);
-                if(!primaryUserId) {
-                    return createErrorResponse(422, 'user.save.error', 'Primary User Id not present.');
-                }
 
 
                 // add child
@@ -343,12 +332,13 @@ class UserApp extends PayApiBaseApp {
             result.primaryUserId = result._id;
 
             // Since, this is a primary user, create a profile
-
             const { db } = this;
             const userProfileCol = db.collection(USER_PROFILE_COL);
 
             let profile = result;
-            profile.primaryUserId = new ObjectId(result._id)
+            profile.primaryUserId = new ObjectId(result._id);
+            profile.defaultCard = new ObjectId(result._id);
+            profile.defaultCardType = defaultCardType;
             const insertedProfile = await userProfileCol.insertOne(profile, {});
             if (insertedProfile.acknowledged !== true || insertedProfile.insertedId == null) {
                 return createErrorResponse(500, 'user..profile.save.error', 'Error creating user profile');
@@ -361,6 +351,53 @@ class UserApp extends PayApiBaseApp {
         } catch (err) {
             log.error('user save error', err, {});
             return createErrorResponse(500, 'user.save.error', 'Error creating user');
+        }
+    }
+
+    /**
+     * Get user by Id
+     * @param req
+     * @returns {Promise <*>}
+     */
+    async getDefaultCard(req){
+        const { log } = req;
+        let { primaryUserId } = req.query;
+        console.log("query", req.query)
+        const userCol = this.db.collection(USER_COL);
+        const userProfileCol = this.db.collection(USER_PROFILE_COL);
+        if(!primaryUserId) {
+            log.error("primaryUserId should be present in the request");
+            return createErrorResponse(400, 'card.primaryUserId.missing', 'primaryUserId should be present in the request');
+        }
+        try {
+            let query ={
+                primaryUserId : new ObjectId(primaryUserId)
+            };
+
+            console.log("query", query)
+            let profileInfo = await userProfileCol.findOne(query);
+            console.log("profileinfo", profileInfo)
+            if(!profileInfo ) {
+                return createErrorResponse(400, 'profile.not.exists', 'Profile doesnt exist for this email id');
+            }
+            query = {
+                _id : new ObjectId(profileInfo.defaultCard)
+            }
+            console.log("query2", query)
+
+            let cardInfo = await userCol.findOne(query);
+            console.log("card info", cardInfo)
+
+
+            return {
+                status: 200,
+                content: {
+                    profileInfo, cardInfo
+                }
+            }
+        } catch (e) {
+            log.error(`error finding user(id- ${id} )`, e, {});
+            return createErrorResponse(500, 'user.find.error', 'Error finding user');
         }
     }
 
@@ -402,10 +439,7 @@ class UserApp extends PayApiBaseApp {
             }
             console.log("query", query)
             users = await userCol.find(query).sort({ modifiedOn: -1 }).toArray();
-            // if(!user){
-            //     log.error(`user not found by id ${id}`);
-            //     return createErrorResponse(404, 'user.not.found', 'User not found by given id');
-            // }
+
             return {
                 status: 200,
                 content: users
@@ -473,10 +507,9 @@ class UserApp extends PayApiBaseApp {
             }
             if(primaryUserId) {
                 console.log("=========Add Child=============", primaryUserId);
-                if(!primaryUserId) {
-                    return createErrorResponse(422, 'user.save.error', 'Primary User Id not present.');
-                }
-
+                // if(!primaryUserId) {
+                //     return createErrorResponse(422, 'user.save.error', 'Primary User Id not present.');
+                // }
 
                 // add child
                 body.primaryUserId = new ObjectId(primaryUserId);
@@ -571,7 +604,7 @@ class UserApp extends PayApiBaseApp {
                 };
                 let checkIfEmailExists = await userProfileCol.findOne(query);
                 if (checkIfEmailExists) {
-                    return createErrorResponse(404, 'email.already.exists', 'This email id already exists')
+                    return createErrorResponse(409, 'email.already.exists', 'This email id already exists')
                 }
             }
 
@@ -585,6 +618,7 @@ class UserApp extends PayApiBaseApp {
                     active: true,
                     modifiedBy: 'demo',
                     modifiedOn: new Date(),
+                    createdOn : new Date(),
                     ...body
                 }
             };
@@ -594,7 +628,7 @@ class UserApp extends PayApiBaseApp {
             });
             console.log("write result", writeResult)
             if (!writeResult) {
-                return createErrorResponse(404, 'profile.not.found', 'Could not identify prfile to update');
+                return createErrorResponse(400, 'profile.not.found', 'Could not identify prfile to update');
             }
             let result = writeResult;
 
@@ -609,6 +643,111 @@ class UserApp extends PayApiBaseApp {
     }
 
 
+    /**
+     * Save contact/leads
+     * @param req
+     * @returns {Promise <*>}
+     */
+    async saveAnlayticsData(req) {
+
+        const {log, headers} = req;
+        const { db } = this;
+        let collectionName;
+
+        // Assume schema validation already happened before
+        let doc = req.body;
+
+        try {
+            if(!headers.jwtToken || !doc.type) {
+                console.log("400", headers, doc.type)
+                return createErrorResponse(400, 'jwt.token.or.type.not.present', 'JWT token or type was not processed in the request');
+            }
+            console.log("jwtToken", headers.jwtToken)
+            let payload = this.jwtUtil.decode(headers.jwtToken);
+            console.log("<<<<------------------payload--------------->>>>", payload);
+            let primaryUserId  = payload.primaryUserId;
+            console.log("primaryUserId from jwt token", primaryUserId)
+
+            let {type, _id,...body} = doc;
+            if(type == "CONTACTS") {
+                collectionName = db.collection(USER_CONTACTS_COL);
+            } else {
+                collectionName = db.collection(USER_LEADS_COL);
+
+            }
+            let dataToInsert = {
+                id : _id,
+                primaryUserId : new ObjectId(primaryUserId),
+                ...body,
+                submittedOn : new Date(),
+                createdOn : new Date(),
+                updatedOn: new Date()
+            }
+
+            const result = await collectionName.insertOne(dataToInsert, {});
+            if (result.acknowledged !== true || result.insertedId == null) {
+                return createErrorResponse(500, 'contact.save.error', 'Error inserting contact');
+            }
+            console.log("write result", result)
+
+            return {
+                status: 200,
+                content: result
+            }
+        } catch (err) {
+            log.error('user save error', err, {});
+            return createErrorResponse(500, 'user.save.error', 'Error creating user');
+        }
+    }
+
+    /**
+     * Get user by Id
+     * @param req
+     * @returns {Promise <*>}
+     */
+    async getAnalyticsData(req){
+        const { log, headers } = req;
+        let { type, searchText } = req.query;
+        console.log("type here", type)
+        let payload = this.jwtUtil.decode(headers.jwtToken);
+        console.log("<<<<------------------payload--------------->>>>", payload);
+        let primaryUserId = payload.primaryUserId;
+        console.log("primaryUserId from jwt token", primaryUserId);
+        let collectionName;
+
+        if(!primaryUserId || !type) {
+            log.error("Either id/primaryUserId should be present in the request");
+            return createErrorResponse(400, 'card.id.primaryUserId.missing', 'Either id/primaryUserId should be present in the request');
+        }
+        if(type == "CONTACTS") {
+            collectionName = this.db.collection(USER_CONTACTS_COL);
+        } else {
+            collectionName = this.db.collection(USER_LEADS_COL);
+        }
+        try {
+            let query ={
+                primaryUserId : new ObjectId(primaryUserId)
+            };
+            if(searchText) {
+                query["$or"] = [
+                    { name: { $regex: searchText, $options: 'i' } }, // Case-insensitive regex match for contact field
+                    { email: { $regex: searchText, $options: 'i' } },    // Case-insensitive regex match for name field
+                    { phoneNo: { $regex: searchText, $options: 'i' } }    // Case-insensitive regex match for phone field
+                ]
+            }
+
+            console.log("query get", query)
+            let data = await collectionName.find(query).sort({ modifiedOn: -1 }).toArray();
+
+            return {
+                status: 200,
+                content: data
+            }
+        } catch (e) {
+            log.error(`error finding data`, e, {});
+            return createErrorResponse(500, 'data.find.error', 'Error finding data');
+        }
+    }
     /**
      * Get profile by token
      * @param req
