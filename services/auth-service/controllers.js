@@ -386,7 +386,7 @@ class UserApp extends PayApiBaseApp {
                 }
             }
 
-            let {primaryUserId, _id, updateCurrentCard = false, ...body} = doc;
+            let {primaryUserId, _id, updateCurrentCard = false, defaultCardType = 'card-design-1', ...body} = doc;
 
             // need to refreactor this part, either delete file if some error occured/do update ioperation to update the url
 
