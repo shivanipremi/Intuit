@@ -509,7 +509,7 @@ class UserApp extends PayApiBaseApp {
 
             if(body.email) {
                 const query = {
-                    _id: {$ne: new ObjectId(idToUpdate)},
+                    primaryUserId: {$ne: new ObjectId(idToUpdate)},
                     email: body.email
                 };
                 let checkIfEmailExists = await userProfileCol.findOne(query);
