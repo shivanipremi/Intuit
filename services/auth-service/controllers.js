@@ -256,106 +256,6 @@ class UserApp extends PayApiBaseApp {
         return doc;
     }
 
-    /**
-     * Insert/Update Parent and Child Cards.
-     * @param req
-     * @returns {Promise<*>}
-     */
-    async handleCardOperations(req) {
-        const {files } = req;
-        const { s3Client, log, options } = this;
-        const { s3Bucket } = options;
-        let s3Options = { bucket: s3Bucket };
-
-        const chars = [..."ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"];
-        let fileToken = [...Array(8)].map(i=>chars[Math.random()*chars.length|0]).join``;
-
-        // Assume schema validation already happened before
-        let doc = req.body;
-        let fileKey ='';
-
-        try {
-            // upload files
-            if(files && files.length) {
-                for(let file of files) {
-                    let ext = file.mimetype.split('/');
-                    let fileName = file.fieldname;
-                    fileKey = `user/${fileToken}.${ext[ext.length - 1]}`;
-                    let uploadResponse = await putJSONObjectAsync(s3Options, fileKey, file.buffer, file.mimetype, s3Client, log);
-                    if(!uploadResponse) {
-                        return createErrorResponse(500, 'image.upload.error', 'Error in uploading image.');
-                    }
-                    doc[fileName] = `${options.s3Url}/${fileKey}`;
-                }
-            }
-
-            let {primaryUserId, _id, updateCurrentCard = false, defaultCardType = 'card-design-1', ...body} = doc;
-
-            // need to refreactor this part, either delete file if some error occured/do update ioperation to update the url
-
-
-            console.log("doc here", body)
-
-
-            if(_id && updateCurrentCard) {
-                console.log("==================Updating user=====================", _id)
-                // update child
-                try {
-                    let result =  await this.updateCard(_id, doc);
-                    return {
-                        status: 200,
-                        content: result
-                    };
-
-                } catch(err) {
-                    console.log("error here", err)
-                }
-            }
-            if(primaryUserId) {
-                console.log("=========Add Child=============", primaryUserId);
-
-
-                // add child
-                body.primaryUserId = new ObjectId(primaryUserId);
-                body.isChild = true;
-                let result = await this.insertCard(body, body.email, false, false);
-                return {
-                    status: 200,
-                    content: result
-                };
-            }
-
-
-            console.log("===================Insert Primary Card=====================")
-            // Case : Add primary User
-            let isAdmin = true, isPrimary = true;
-            let result = await this.insertCard(body, body.email, isAdmin, isPrimary);
-            result.primaryUserId = result._id;
-
-            // Since, this is a primary user, create a profile
-            const { db } = this;
-            const userProfileCol = db.collection(USER_PROFILE_COL);
-
-            let profile = result;
-            profile.primaryUserId = new ObjectId(result._id);
-            profile.defaultCard = new ObjectId(result._id);
-            profile.defaultCardType = defaultCardType;
-
-            console.log("creating Profile...", profile)
-            const insertedProfile = await userProfileCol.insertOne(profile, {});
-            if (insertedProfile.acknowledged !== true || insertedProfile.insertedId == null) {
-                return createErrorResponse(500, 'user..profile.save.error', 'Error creating user profile');
-            }
-
-            return {
-                status: 200,
-                content: result
-            };
-        } catch (err) {
-            log.error('user save error', err, {});
-            return createErrorResponse(500, 'user.save.error', 'Error creating user');
-        }
-    }
 
     /**
      * Get user by Id
@@ -537,6 +437,9 @@ class UserApp extends PayApiBaseApp {
 
             let profile = result;
             profile.primaryUserId = new ObjectId(result._id);
+            profile.defaultCard = new ObjectId(result._id);
+            profile.defaultCardType = defaultCardType;
+            console.log("profile here",profile)
             const insertedProfile = await userProfileCol.insertOne(profile, {});
             if (insertedProfile.acknowledged !== true || insertedProfile.insertedId == null) {
                 return createErrorResponse(500, 'user..profile.save.error', 'Error creating user profile');
