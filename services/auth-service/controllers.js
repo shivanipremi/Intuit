@@ -443,10 +443,11 @@ class UserApp extends PayApiBaseApp {
 
             const { db } = this;
             const userProfileCol = db.collection(USER_PROFILE_COL);
-
-            profile.primaryUserId = new ObjectId(result._id);
-            profile.defaultCard = new ObjectId(result._id);
+            profile.primaryUserId = new ObjectId(profile._id);
+            profile.defaultCard = new ObjectId(profile._id);
             profile.defaultCardType = defaultCardType;
+            delete profile._id
+
             console.log("profile here",profile)
             const insertedProfile = await userProfileCol.insertOne(profile, {});
             if (insertedProfile.acknowledged !== true || insertedProfile.insertedId == null) {
@@ -456,7 +457,7 @@ class UserApp extends PayApiBaseApp {
 
             return {
                 status: 200,
-                content: profile
+                content: result
             };
         } catch (err) {
             log.error('user save error', err, {});
