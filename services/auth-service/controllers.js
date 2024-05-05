@@ -457,7 +457,7 @@ class UserApp extends PayApiBaseApp {
 
             return {
                 status: 200,
-                content: result
+                content: profile
             };
         } catch (err) {
             log.error('user save error', err, {});
