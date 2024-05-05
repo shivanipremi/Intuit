@@ -87,8 +87,8 @@ class UserApp extends PayApiBaseApp {
         router.get("/cardDetails", validateJwt, invokeAsync(this.getCards))
         router.get("/profile", validateJwt, invokeAsync(this.getProfile))
         router.post('/profile/update', validateJwt, uploadFile(5000000).any('image'), invokeAsync(this.updateProfile));
-        router.post('/contact', validateJwt, invokeAsync(this.saveAnlayticsData));
-        router.get("/contacts", validateJwt, invokeAsync(this.getAnalyticsData))
+        router.post('/analytics', validateJwt, invokeAsync(this.saveAnlayticsData));
+        router.get("/analytics", validateJwt, invokeAsync(this.getAnalyticsData))
 
     }
 
@@ -264,7 +264,7 @@ class UserApp extends PayApiBaseApp {
      */
     async getDefaultCard(req){
         const { log } = req;
-        let { primaryUserId } = req.query;
+        let { primaryUserId, type = 'DIGITAL' } = req.query;
         console.log("query", req.query)
         const userCol = this.db.collection(USER_COL);
         const userProfileCol = this.db.collection(USER_PROFILE_COL);
@@ -284,7 +284,8 @@ class UserApp extends PayApiBaseApp {
                 return createErrorResponse(400, 'profile.not.exists', 'Profile doesnt exist for this email id');
             }
             query = {
-                _id : new ObjectId(profileInfo.defaultCard)
+                _id : new ObjectId(profileInfo.defaultCard),
+                type
             }
             console.log("query2", query)
 
@@ -312,7 +313,7 @@ class UserApp extends PayApiBaseApp {
     */
     async getCards(req){
         const { log, headers } = req;
-        let { id, primaryUserId } = req.query;
+        let { id, primaryUserId, type = 'DIGITAL' } = req.query;
         if(headers.jwtToken) {
             let payload = this.jwtUtil.decode(headers.jwtToken);
             console.log("<<<<------------------payload--------------->>>>", payload);
@@ -327,7 +328,9 @@ class UserApp extends PayApiBaseApp {
         }
         let users = [];
         try {
-            let query ={};
+            let query ={
+                type
+            };
 
             if(primaryUserId) {
                 query = {
@@ -369,6 +372,7 @@ class UserApp extends PayApiBaseApp {
 
         // Assume schema validation already happened before
         let doc = req.body;
+        doc.type = doc.type || 'DIGITAL';
         let fileKey ='';
 
         try {
@@ -386,7 +390,8 @@ class UserApp extends PayApiBaseApp {
                 }
             }
 
-            let {primaryUserId, _id, updateCurrentCard = false, defaultCardType = 'card-design-1', ...body} = doc;
+            let {primaryUserId, _id, updateCurrentCard = false, defaultCardType = 'card-design-1',...body} = doc;
+
 
             // need to refreactor this part, either delete file if some error occured/do update ioperation to update the url
 
@@ -683,6 +688,10 @@ class UserApp extends PayApiBaseApp {
             //     log.error(`user not found by id ${id}`);
             //     return createErrorResponse(404, 'user.not.found', 'User not found by given id');
             // }
+
+            // get user cards
+            // get user saved contacts/leads/visits/
+
             return {
                 status: 200,
                 content: users
