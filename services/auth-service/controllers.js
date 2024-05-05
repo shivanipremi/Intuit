@@ -2,7 +2,7 @@
 
 const
     {
-        initApiOptions, createErrorResponse, PayApiBaseApp, initMongoClient,
+        initApiOptions, createErrorResponse, createSuccessResponse, PayApiBaseApp, initMongoClient,
     } = require('../../lib/services/base-api-ms'),
     { initialize, initValidateOptions, allowCrossDomain, parseBooleanParam } = require('../../lib/services/service-base-v2'),
     userConfig = require('../../lib/schema/user-config'),
@@ -203,7 +203,7 @@ class UserApp extends PayApiBaseApp {
             return createErrorResponse(500, 'user.save.error', 'Error creating user');
         }
         doc._id = result.insertedId;
-        return doc;
+        return createSuccessResponse(doc);
     }
 
     /**
@@ -253,7 +253,8 @@ class UserApp extends PayApiBaseApp {
             return createErrorResponse(400, 'card.not.found', 'Could not identify card to update');
         }
         let doc = writeResult;
-        return doc;
+        return createSuccessResponse(doc);
+
     }
 
 
@@ -402,11 +403,13 @@ class UserApp extends PayApiBaseApp {
                 console.log("==================Updating user=====================", _id)
                 // update child
                 try {
-                    let result =  await this.updateCard(_id, doc);
-                    return {
-                        status: 200,
-                        content: result
-                    };
+                    // let result =  await this.updateCard(_id, doc);
+                    // return {
+                    //     status: 200,
+                    //     content: result
+                    // };
+
+                    return await this.updateCard(_id, doc);
 
                 } catch(err) {
                     console.log("error here", err)
@@ -421,25 +424,26 @@ class UserApp extends PayApiBaseApp {
                 // add child
                 body.primaryUserId = new ObjectId(primaryUserId);
                 body.isChild = true;
-                let result = await this.insertCard(body, body.email, false, false);
-                return {
-                    status: 200,
-                    content: result
-                };
+                return await this.insertCard(body, body.email, false, false);
+
             }
 
             console.log("===================Insert Primary Card=====================")
             // Case : Add primary User
             let isAdmin = true, isPrimary = true;
             let result = await this.insertCard(body, body.email, isAdmin, isPrimary);
-            result.primaryUserId = result._id;
+            console.log("RESULT HERE-----------------", result)
+            if(result.status != 200 || !result.content) {
+                return result;
+            }
+            let profile = result.content;
+
 
             // Since, this is a primary user, create a profile
 
             const { db } = this;
             const userProfileCol = db.collection(USER_PROFILE_COL);
 
-            let profile = result;
             profile.primaryUserId = new ObjectId(result._id);
             profile.defaultCard = new ObjectId(result._id);
             profile.defaultCardType = defaultCardType;
@@ -448,6 +452,7 @@ class UserApp extends PayApiBaseApp {
             if (insertedProfile.acknowledged !== true || insertedProfile.insertedId == null) {
                 return createErrorResponse(500, 'user.profile.save.error', 'Error creating user profile');
             }
+            console.log("reuslt final", result)
 
             return {
                 status: 200,
@@ -514,7 +519,8 @@ class UserApp extends PayApiBaseApp {
                 };
                 let checkIfEmailExists = await userProfileCol.findOne(query);
                 if (checkIfEmailExists) {
-                    return createErrorResponse(409, 'email.already.exists', 'This email id already exists')
+                    console.log("email id already exists")
+                    return createErrorResponse(409, 'user.email.exists', 'This email already exists.');
                 }
             }
 
