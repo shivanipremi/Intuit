@@ -325,6 +325,7 @@ class UserApp extends PayApiBaseApp {
                 };
             }
 
+
             console.log("===================Insert Primary Card=====================")
             // Case : Add primary User
             let isAdmin = true, isPrimary = true;
