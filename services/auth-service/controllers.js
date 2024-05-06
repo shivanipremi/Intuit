@@ -599,7 +599,8 @@ class UserApp extends PayApiBaseApp {
                 primaryUserId : new ObjectId(primaryUserId),
                 submittedOn : new Date(),
                 createdOn : new Date(),
-                updatedOn: new Date()
+                updatedOn: new Date(),
+                type
             }
 
             const result = await collectionName.insertOne(dataToInsert, {});
@@ -679,6 +680,8 @@ class UserApp extends PayApiBaseApp {
         console.log("primaryUserId from jwt token", primaryUserId)
 
         const userProfileCol = this.db.collection(USER_PROFILE_COL);
+        const userCol = this.db.collection(USER_COL);
+        const analyticsCol = this.db.collection(USER_CONTACTS_COL);
         if(!primaryUserId) {
             log.error("primaryUserId should be present in the request");
             return createErrorResponse(400, 'profile.primaryUserId.missing', 'primaryUserId should be present in the request');
@@ -689,18 +692,44 @@ class UserApp extends PayApiBaseApp {
             };
 
             console.log("query", query)
-            let users = await userProfileCol.find(query).sort({ modifiedOn: -1 }).toArray();
-            // if(!user){
-            //     log.error(`user not found by id ${id}`);
-            //     return createErrorResponse(404, 'user.not.found', 'User not found by given id');
-            // }
+            let user = await userProfileCol.findOne(query);
+            if(!user){
+                log.error(`user not found`);
+                return createErrorResponse(404, 'user.not.found', 'User not found by given id');
+            }
+            let cardsQuery = {
+                $or: [
+                    { _id: new ObjectId(primaryUserId) }, // Matching documents with _id equal to primaryUserId
+                    { primaryUserId: new ObjectId(primaryUserId) } // Matching documents with primaryUserId field equal to primaryUserId
+                ]
+            };
+            let contactsQuery = {
+                ...query,
+                type: 'CONTACTS'
+            }
+            let leadQuery = {
+                ...query,
+                type: 'LEADS'
+            }
+            let visitedLinksQuery = {
+                ...query,
+                type: 'VISITED'
+            }
+            let [totalCards, totalContacts, totalLeads, totalLinkVisitedTimes] = await Promise.all([
+                userCol.countDocuments(cardsQuery),
+                analyticsCol.countDocuments(contactsQuery),
+                analyticsCol.countDocuments(leadQuery),
+                analyticsCol.countDocuments(visitedLinksQuery)
+            ]);
 
-            // get user cards
-            // get user saved contacts/leads/visits/
-
+            user.totalCards = totalCards;
+            user.totalContacts = totalContacts;
+            user.totalLeads = totalLeads;
+            user.totalLinkVisitedTimes = totalLinkVisitedTimes;
+            
             return {
                 status: 200,
-                content: users
+                content: [user]
             }
         } catch (e) {
             log.error(`error finding user`, e, {});
