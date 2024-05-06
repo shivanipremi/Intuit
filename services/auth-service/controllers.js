@@ -87,8 +87,8 @@ class UserApp extends PayApiBaseApp {
         router.get("/cardDetails", validateJwt, invokeAsync(this.getCards))
         router.get("/profile", validateJwt, invokeAsync(this.getProfile))
         router.post('/profile/update', validateJwt, uploadFile(5000000).any('image'), invokeAsync(this.updateProfile));
-        router.post('/analytics', validateJwt, invokeAsync(this.saveAnlayticsData));
-        router.get("/analytics", validateJwt, invokeAsync(this.getAnalyticsData))
+        router.post('/contact', validateJwt, invokeAsync(this.saveAnlayticsData));
+        router.get("/contacts", validateJwt, invokeAsync(this.getAnalyticsData))
 
     }
 
@@ -519,6 +519,7 @@ class UserApp extends PayApiBaseApp {
                     email: body.email
                 };
                 let checkIfEmailExists = await userProfileCol.findOne(query);
+                console.log("check if email exists", checkIfEmailExists)
                 if (checkIfEmailExists) {
                     console.log("email id already exists")
                     return createErrorResponse(409, 'user.email.exists', 'This email already exists.');
