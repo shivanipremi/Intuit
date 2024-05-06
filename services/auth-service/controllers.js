@@ -390,7 +390,7 @@ class UserApp extends PayApiBaseApp {
                 }
             }
 
-            let {primaryUserId, _id, updateCurrentCard = false, defaultCardType = 'card-design-1',...body} = doc;
+            let {primaryUserId, _id, updateCurrentCard = false,...body} = doc;
 
 
             // need to refreactor this part, either delete file if some error occured/do update ioperation to update the url
@@ -445,7 +445,7 @@ class UserApp extends PayApiBaseApp {
             const userProfileCol = db.collection(USER_PROFILE_COL);
             profile.primaryUserId = new ObjectId(profile._id);
             profile.defaultCard = new ObjectId(profile._id);
-            profile.defaultCardType = defaultCardType;
+            // profile.defaultCardType = defaultCardType;
             delete profile._id
 
             console.log("profile here",profile)
@@ -601,7 +601,7 @@ class UserApp extends PayApiBaseApp {
                 createdOn : new Date(),
                 updatedOn: new Date()
             }
-            
+
             const result = await collectionName.insertOne(dataToInsert, {});
             if (result.acknowledged !== true || result.insertedId == null) {
                 return createErrorResponse(500, 'contact.save.error', 'Error inserting contact');
