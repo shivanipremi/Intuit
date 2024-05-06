@@ -594,19 +594,18 @@ class UserApp extends PayApiBaseApp {
 
             }
             let dataToInsert = {
-                ...body,
                 id : _id,
+                ...body,
                 primaryUserId : new ObjectId(primaryUserId),
                 submittedOn : new Date(),
                 createdOn : new Date(),
                 updatedOn: new Date()
             }
-
+            
             const result = await collectionName.insertOne(dataToInsert, {});
             if (result.acknowledged !== true || result.insertedId == null) {
                 return createErrorResponse(500, 'contact.save.error', 'Error inserting contact');
             }
-            console.log("write result", result)
 
             return {
                 status: 200,
