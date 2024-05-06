@@ -586,13 +586,9 @@ class UserApp extends PayApiBaseApp {
             let primaryUserId  = payload.primaryUserId;
             console.log("primaryUserId from jwt token", primaryUserId)
 
-            let {type, _id,...body} = doc;
-            if(type == "CONTACTS") {
-                collectionName = db.collection(USER_CONTACTS_COL);
-            } else {
-                collectionName = db.collection(USER_LEADS_COL);
+            let {_id,...body} = doc;
+            let collectionName = db.collection(USER_CONTACTS_COL);
 
-            }
             let dataToInsert = {
                 id : _id,
                 ...body,
@@ -600,7 +596,6 @@ class UserApp extends PayApiBaseApp {
                 submittedOn : new Date(),
                 createdOn : new Date(),
                 updatedOn: new Date(),
-                type
             }
 
             const result = await collectionName.insertOne(dataToInsert, {});
@@ -726,7 +721,7 @@ class UserApp extends PayApiBaseApp {
             user.totalContacts = totalContacts;
             user.totalLeads = totalLeads;
             user.totalLinkVisitedTimes = totalLinkVisitedTimes;
-            
+
             return {
                 status: 200,
                 content: [user]
