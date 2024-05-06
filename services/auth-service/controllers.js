@@ -594,9 +594,9 @@ class UserApp extends PayApiBaseApp {
 
             }
             let dataToInsert = {
+                ...body,
                 id : _id,
                 primaryUserId : new ObjectId(primaryUserId),
-                ...body,
                 submittedOn : new Date(),
                 createdOn : new Date(),
                 updatedOn: new Date()
