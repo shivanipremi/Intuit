@@ -195,6 +195,7 @@ class UserApp extends PayApiBaseApp {
             createdOn: new Date(),
             createdBy: 'demo',
             modifiedBy: 'demo',
+            isDeleted: 0,
             ...data
         };
         console.log("========data to be inserted============", doc)
@@ -343,6 +344,7 @@ class UserApp extends PayApiBaseApp {
                 query._id = new ObjectId(id);
             }
             query.type = type;
+            query.isDeleted = 0;
             console.log("query", query)
             users = await userCol.find(query).sort({ modifiedOn: -1 }).toArray();
 
@@ -570,8 +572,6 @@ class UserApp extends PayApiBaseApp {
 
         const {log, headers} = req;
         const { db } = this;
-        let collectionName;
-
         // Assume schema validation already happened before
         let doc = req.body;
 
@@ -696,7 +696,8 @@ class UserApp extends PayApiBaseApp {
                 $or: [
                     { _id: new ObjectId(primaryUserId) }, // Matching documents with _id equal to primaryUserId
                     { primaryUserId: new ObjectId(primaryUserId) } // Matching documents with primaryUserId field equal to primaryUserId
-                ]
+                ],
+                isDeleted : 0
             };
             let contactsQuery = {
                 ...query,
