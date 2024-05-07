@@ -639,7 +639,8 @@ class UserApp extends PayApiBaseApp {
         }
         try {
             let query ={
-                primaryUserId : new ObjectId(primaryUserId)
+                primaryUserId : new ObjectId(primaryUserId),
+                type
             };
             if(searchText) {
                 query["$or"] = [
