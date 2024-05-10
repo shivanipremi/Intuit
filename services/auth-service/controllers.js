@@ -89,7 +89,7 @@ class UserApp extends PayApiBaseApp {
         router.post('/profile/update', validateJwt, uploadFile(5000000).any('image'), invokeAsync(this.updateProfile));
         router.post('/contact', validateJwt, invokeAsync(this.saveAnlayticsData));
         router.get("/contacts", validateJwt, invokeAsync(this.getAnalyticsData))
-
+        router.get("/dashboard", validateJwt, invokeAsync(this.getDashboardData))
     }
 
 
@@ -218,7 +218,7 @@ class UserApp extends PayApiBaseApp {
         const { db } = this;
         const userCol = db.collection(USER_COL);
 
-        let {primaryUserId, _id, updateCurrentCard,...updateData} = data;
+        let {primaryUserId, _id, updateCurrentCard, isDeleted, ...updateData} = data;
         console.log("update data ", updateData)
         // update primary user
         // if(data.email) {
@@ -242,6 +242,7 @@ class UserApp extends PayApiBaseApp {
                 active: true,
                 modifiedBy: 'demo',
                 modifiedOn: new Date(),
+                isDeleted : isDeleted == 1 ? 1 : 0,
                 ...updateData
             }
         };
@@ -731,6 +732,72 @@ class UserApp extends PayApiBaseApp {
         } catch (e) {
             log.error(`error finding user`, e, {});
             return createErrorResponse(500, 'user.profile.find.error', 'Error finding user profile');
+        }
+    }
+
+    /**
+     * Get user by Id
+     * @param req
+     * @returns {Promise <*>}
+     * TYPE-HOME, USERS, REPORTS
+     */
+    async getDashboardData(req) {
+        const { log, headers } = req;
+        let { type = 'HOME' } = req.query;
+        console.log("type here", type)
+        // here we need to check if it is the admin
+        
+        // let payload = this.jwtUtil.decode(headers.jwtToken);
+        // console.log("<<<<------------------payload--------------->>>>", payload);
+        // let primaryUserId = payload.primaryUserId;
+        // console.log("primaryUserId from jwt token", primaryUserId);
+        const userProfileCol = this.db.collection(USER_PROFILE_COL);
+        let analyticsCol = this.db.collection(USER_CONTACTS_COL)
+        let result;
+
+        try {
+
+            if(type == 'HOME') {
+                let ordersQuery = {
+                    type: 'ORDERS'
+                }
+                let contactsQuery = {
+                    type: 'CONTACTS'
+                }
+                let leadQuery = {
+                    type: 'LEADS'
+                }
+                let visitedLinksQuery = {
+                    type: 'VISITED'
+                }
+                let [users, orders, totalLeads, totalContacts, totalLinkVisitedTimes] = await Promise.all([
+                    userProfileCol.find({}, {modifiedOn : -1}).toArray(),
+                    analyticsCol.find(ordersQuery, {modifiedOn : -1}).toArray(),
+                    analyticsCol.countDocuments(leadQuery),
+                    analyticsCol.countDocuments(contactsQuery),
+                    analyticsCol.countDocuments(visitedLinksQuery)
+                ]);
+
+                result = {
+                    totalUsers : users.length || 0,
+                    totalOrders : orders.length || 0,
+                    totalLeads,
+                    totalContacts,
+                    totalLinkVisitedTimes,
+                    users: users,
+                    orders : orders
+
+                }
+
+            }
+
+            return {
+                status: 200,
+                content: result
+            }
+        } catch (e) {
+            log.error(`error finding data`, e, {});
+            return createErrorResponse(500, 'data.find.error', 'Error finding data');
         }
     }
 
