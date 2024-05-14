@@ -303,7 +303,7 @@ class UserApp extends PayApiBaseApp {
                 }
             }
         } catch (e) {
-            log.error(`error finding user(id- ${id} )`, e, {});
+            log.error(`error finding user(id-)`, e, {});
             return createErrorResponse(500, 'user.find.error', 'Error finding user');
         }
     }
@@ -622,7 +622,7 @@ class UserApp extends PayApiBaseApp {
     async getAnalyticsData(req){
         const { log, headers } = req;
         let { type, searchText } = req.query;
-        console.log("type here", type)
+        console.log("type here", type, searchText)
         let payload = this.jwtUtil.decode(headers.jwtToken);
         console.log("<<<<------------------payload--------------->>>>", payload);
         let primaryUserId = payload.primaryUserId;
@@ -746,7 +746,7 @@ class UserApp extends PayApiBaseApp {
         let { type = 'HOME' } = req.query;
         console.log("type here", type)
         // here we need to check if it is the admin
-        
+
         // let payload = this.jwtUtil.decode(headers.jwtToken);
         // console.log("<<<<------------------payload--------------->>>>", payload);
         // let primaryUserId = payload.primaryUserId;
@@ -770,8 +770,30 @@ class UserApp extends PayApiBaseApp {
                 let visitedLinksQuery = {
                     type: 'VISITED'
                 }
+                let aggregateQuery = [{
+                        $lookup: {
+                            from: USER_COL,
+                            localField: "primaryUserId",
+                            foreignField: "primaryUserId",
+                            as: USER_COL
+                        }
+                    },
+                        {
+                            $addFields: {
+                                cards: {
+                                    $filter: {
+                                        input: "$cards",
+                                        as: "card",
+                                        cond: { $eq: ["$$card.type", "NFC"] } // Filter cards with type NFC
+                                    }
+                                }
+                            }
+                        }
+                    ]
+
+
                 let [users, orders, totalLeads, totalContacts, totalLinkVisitedTimes] = await Promise.all([
-                    userProfileCol.find({}, {modifiedOn : -1}).toArray(),
+                    userProfileCol.aggregate(aggregateQuery).toArray(),
                     analyticsCol.find(ordersQuery, {modifiedOn : -1}).toArray(),
                     analyticsCol.countDocuments(leadQuery),
                     analyticsCol.countDocuments(contactsQuery),
