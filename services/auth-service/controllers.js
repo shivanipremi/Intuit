@@ -55,7 +55,7 @@ const USER_COL = 'cards';
 const USER_PROFILE_COL = 'users';
 const USER_CONTACTS_COL = 'contacts';
 const USER_LEADS_COL = 'leads'
-const uploadDir = path.join(process.cwd(), 'uploads');
+const uploadDir = path.join(__dirname, '../../../uploads');
 
 
 
@@ -79,6 +79,8 @@ class UserApp extends PayApiBaseApp {
 
         this.app.use(allowCrossDomain.bind(this))
         this.app.use(session({ secret: this.options.sessionSecret, resave: false, saveUninitialized: true }));
+        this.app.use("/uploads", this.express.static(uploadDir));
+
 
         const invokeAsync = this.invokeAsync.bind(this);
         const validateJwt = this.jwtUtil.validateJwt.bind(this);
