@@ -31,6 +31,8 @@ function parseOptions(argv) {
         .option('--google-client-id <Client Id>', 'Google client ID')
         .option('--google-client-secret <client secret>', 'Google client ID')
         .option('--validate-jwt <validate-jwt>', 'Validate JWT - true/false', parseBooleanParam, false)
+        .option('--app-host <app-host>', 'App Host')
+
 
     appendS3Options(options);
     let opts = options
@@ -43,7 +45,7 @@ function parseOptions(argv) {
 async function initResources(options) {
 
     return await initialize(options)
-        .then(initValidateOptions('mongoUrl', 'mongoUser', 'mongoPassword', 'googleClientId', 'googleClientSecret'))
+        .then(initValidateOptions('mongoUrl', 'mongoUser', 'mongoPassword', 'googleClientId', 'googleClientSecret', 'appHost'))
         // .then(initS3CmdLineOptions)
         // .then(initS3Client)
         .then(initMongoClient)
@@ -174,7 +176,7 @@ class UserApp extends PayApiBaseApp {
      * */
 
     async insertCard(data, email, isAdmin, isPrimary, files) {
-        const { db } = this;
+        const { db, options } = this;
         const userCol = db.collection(USER_COL);
 
         if(isPrimary) {
@@ -189,7 +191,7 @@ class UserApp extends PayApiBaseApp {
             }
         }
 
-        const filesUploaded = await this.uploadFilesToServer(files);
+        const filesUploaded = await this.uploadFilesToServer(files, options.appHost, options.port);
         console.log("files to upload", filesUploaded)
 
         let doc = {
@@ -213,25 +215,26 @@ class UserApp extends PayApiBaseApp {
         return createSuccessResponse(doc);
     }
 
-    async uploadFilesToServer(files) {
+    async uploadFilesToServer(files, appHost, port) {
         try {
             let fileMap = {}
             const fileSavePromises = files.map((file) => {
-                const filePath = path.join(uploadDir, `${Date.now()}-${file.originalname}`);
+                let name = `${Date.now()}-${file.originalname}`
+                let relativeFilePath = `${appHost}:${port}/uploads/${name}`
+                const filePath = path.join(uploadDir, name);
                 return new Promise((resolve, reject) => {
                     fs.writeFile(filePath, file.buffer, (err) => {
                         if (err) {
                             reject(err);
                         } else {
                             const fileName = file.fieldname;
-                            resolve({ [fileName]: filePath });
+                            resolve({ [fileName]: relativeFilePath });
                         }
                     });
                 });
             });
 
             let result = await Promise.all(fileSavePromises);
-            console.log("result here", result);
             if(result?.length) {
                 fileMap = result.reduce((acc, cur) => ({ ...acc, ...cur }), {});
                 console.log(fileMap);
@@ -258,7 +261,7 @@ class UserApp extends PayApiBaseApp {
 
     async updateCard(userId, data, files) {
         try {
-            const { db } = this;
+            const { db, options } = this;
             const userCol = db.collection(USER_COL);
 
             let {primaryUserId, _id, updateCurrentCard, isDeleted, ...updateData} = data;
@@ -278,7 +281,7 @@ class UserApp extends PayApiBaseApp {
                 _id : new ObjectId(userId)
             };
 
-            const filesUploaded = await this.uploadFilesToServer(files);
+            const filesUploaded = await this.uploadFilesToServer(files, options.appHost, options.port);
             console.log("files to upload", filesUploaded)
             const updateOptions = {
                 $set: {
