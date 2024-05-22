@@ -10,6 +10,8 @@ const
     { OAuth2Client } = require('google-auth-library'),
     JWTUtil = require('../../lib/jwt-util'),
     session = require('express-session'),
+    path = require('path'),
+    fs = require('fs'),
 {   appendS3Options, initS3Client, uploadFile, putJSONObjectAsync, initS3CmdLineOptions} = require('../../lib/s3-utils'),
     asMain = (require.main === module);
 
@@ -41,9 +43,9 @@ function parseOptions(argv) {
 async function initResources(options) {
 
     return await initialize(options)
-        .then(initValidateOptions('mongoUrl', 'mongoUser', 'mongoPassword', 'googleClientId', 'googleClientSecret',))
-        .then(initS3CmdLineOptions)
-        .then(initS3Client)
+        .then(initValidateOptions('mongoUrl', 'mongoUser', 'mongoPassword', 'googleClientId', 'googleClientSecret'))
+        // .then(initS3CmdLineOptions)
+        // .then(initS3Client)
         .then(initMongoClient)
         .then(initGoogleAuthClient)
 }
@@ -53,6 +55,8 @@ const USER_COL = 'cards';
 const USER_PROFILE_COL = 'users';
 const USER_CONTACTS_COL = 'contacts';
 const USER_LEADS_COL = 'leads'
+const uploadDir = path.join(process.cwd(), 'uploads');
+
 
 
 
@@ -110,8 +114,6 @@ class UserApp extends PayApiBaseApp {
             let response = await gapiClient.verifyIdToken({ idToken: token, audience });
             let payload = response.getPayload();
 
-            console.log("PAYLOAD FROM GOOGLE HERE", payload)
-
             if(payload && payload.email) {
                 if(primaryUserId) {
                     let query = {
@@ -135,7 +137,6 @@ class UserApp extends PayApiBaseApp {
                     }
                 }
                 let user = await userCol.findOneAndUpdate(query, updateOptions, { returnDocument: "after" });
-                console.log("üser here->>>>>>>>>>>>>>>>>from db here", user);
                 let jwtPayload = {
                     primaryUserId: user._id
                 }
@@ -170,7 +171,7 @@ class UserApp extends PayApiBaseApp {
      *  @returns {Promise<*>}
      * */
 
-    async insertCard(data, email, isAdmin, isPrimary) {
+    async insertCard(data, email, isAdmin, isPrimary, files) {
         const { db } = this;
         const userCol = db.collection(USER_COL);
 
@@ -186,6 +187,9 @@ class UserApp extends PayApiBaseApp {
             }
         }
 
+        const filesUploaded = await this.uploadFilesToServer(files);
+        console.log("files to upload", filesUploaded)
+
         let doc = {
             email,
             active: true,
@@ -196,9 +200,9 @@ class UserApp extends PayApiBaseApp {
             createdBy: 'demo',
             modifiedBy: 'demo',
             isDeleted: 0,
-            ...data
+            ...data,
+            ...filesUploaded
         };
-        console.log("========data to be inserted============", doc)
         const result = await userCol.insertOne(doc, {});
         if (result.acknowledged !== true || result.insertedId == null) {
             return createErrorResponse(500, 'user.save.error', 'Error creating user');
@@ -207,56 +211,95 @@ class UserApp extends PayApiBaseApp {
         return createSuccessResponse(doc);
     }
 
+    async uploadFilesToServer(files) {
+        try {
+            let fileMap = {}
+            const fileSavePromises = files.map((file) => {
+                const filePath = path.join(uploadDir, `${Date.now()}-${file.originalname}`);
+                return new Promise((resolve, reject) => {
+                    fs.writeFile(filePath, file.buffer, (err) => {
+                        if (err) {
+                            reject(err);
+                        } else {
+                            const fileName = file.fieldname;
+                            resolve({ [fileName]: filePath });
+                        }
+                    });
+                });
+            });
+
+            let result = await Promise.all(fileSavePromises);
+            console.log("result here", result);
+            if(result?.length) {
+                fileMap = result.reduce((acc, cur) => ({ ...acc, ...cur }), {});
+                console.log(fileMap);
+            }
+            return fileMap;
+
+
+
+
+        } catch (error) {
+            console.log("Error occured while saving files")
+            throw error;
+        }
+    }
+
+
+
+
     /**
      * function to update card details
      *  @param req
      *  @returns {Promise<*>}
      * */
 
-    async updateCard(userId, data) {
-        console.log("incoming data", data)
-        const { db } = this;
-        const userCol = db.collection(USER_COL);
+    async updateCard(userId, data, files) {
+        try {
+            const { db } = this;
+            const userCol = db.collection(USER_COL);
 
-        let {primaryUserId, _id, updateCurrentCard, isDeleted, ...updateData} = data;
-        console.log("update data ", updateData)
-        // update primary user
-        // if(data.email) {
-        //     const query ={
-        //         _id : {$ne : new ObjectId(userId)},
-        //         email : data.email
-        //     };
-        //     let checkIfEmailExists = await userCol.findOne(query);
-        //     if (checkIfEmailExists) {
-        //         return createErrorResponse(404, 'email.already.exists', 'This email id already exists')
-        //     }
-        // }
+            let {primaryUserId, _id, updateCurrentCard, isDeleted, ...updateData} = data;
+            // update primary user
+            // if(data.email) {
+            //     const query ={
+            //         _id : {$ne : new ObjectId(userId)},
+            //         email : data.email
+            //     };
+            //     let checkIfEmailExists = await userCol.findOne(query);
+            //     if (checkIfEmailExists) {
+            //         return createErrorResponse(404, 'email.already.exists', 'This email id already exists')
+            //     }
+            // }
 
-        const query = {
-            _id : new ObjectId(userId)
-        };
+            const query = {
+                _id : new ObjectId(userId)
+            };
 
-        console.log("query here", query)
-        const updateOptions = {
-            $set: {
-                active: true,
-                modifiedBy: 'demo',
-                modifiedOn: new Date(),
-                isDeleted : isDeleted == 1 ? 1 : 0,
-                ...updateData
+            const filesUploaded = await this.uploadFilesToServer(files);
+            console.log("files to upload", filesUploaded)
+            const updateOptions = {
+                $set: {
+                    active: true,
+                    modifiedBy: 'demo',
+                    modifiedOn: new Date(),
+                    isDeleted : isDeleted == 1 ? 1 : 0,
+                    ...updateData,
+                    ...filesUploaded
+                }
+            };
+            const writeResult = await userCol.findOneAndUpdate(query, updateOptions, {
+                returnDocument: 'after'
+            });
+            if (!writeResult) {
+                return createErrorResponse(400, 'card.not.found', 'Could not identify card to update');
             }
-        };
-        console.log("update options", updateOptions)
-        const writeResult = await userCol.findOneAndUpdate(query, updateOptions, {
-            returnDocument: 'after'
-        });
-        console.log("write result", writeResult)
-        if (!writeResult) {
-            return createErrorResponse(400, 'card.not.found', 'Could not identify card to update');
-        }
-        let doc = writeResult;
-        return createSuccessResponse(doc);
+            let doc = writeResult;
+            return createSuccessResponse(doc);
 
+        } catch(err) {
+            throw err;
+        }
     }
 
 
@@ -268,7 +311,6 @@ class UserApp extends PayApiBaseApp {
     async getDefaultCard(req){
         const { log } = req;
         let { primaryUserId, type = 'DIGITAL' } = req.query;
-        console.log("query", req.query)
         const userCol = this.db.collection(USER_COL);
         const userProfileCol = this.db.collection(USER_PROFILE_COL);
         if(!primaryUserId) {
@@ -280,9 +322,7 @@ class UserApp extends PayApiBaseApp {
                 primaryUserId : new ObjectId(primaryUserId)
             };
 
-            console.log("query", query)
             let profileInfo = await userProfileCol.findOne(query);
-            console.log("profileinfo", profileInfo)
             if(!profileInfo ) {
                 return createErrorResponse(400, 'profile.not.exists', 'Profile doesnt exist for this email id');
             }
@@ -290,11 +330,8 @@ class UserApp extends PayApiBaseApp {
                 _id : new ObjectId(profileInfo.defaultCard),
                 type
             }
-            console.log("query2", query)
 
             let cardInfo = await userCol.findOne(query);
-            console.log("card info", cardInfo)
-
 
             return {
                 status: 200,
@@ -319,11 +356,8 @@ class UserApp extends PayApiBaseApp {
         let { id, primaryUserId, type = 'DIGITAL' } = req.query;
         if(headers.jwtToken) {
             let payload = this.jwtUtil.decode(headers.jwtToken);
-            console.log("<<<<------------------payload--------------->>>>", payload);
             primaryUserId = payload.primaryUserId;
-            console.log("primaryUserId from jwt token", primaryUserId)
         }
-        console.log("query", req.query)
         const userCol = this.db.collection(USER_COL);
         if(!id && !primaryUserId) {
             log.error("Either id/primaryUserId should be present in the request");
@@ -346,7 +380,6 @@ class UserApp extends PayApiBaseApp {
             }
             query.type = type;
             query.isDeleted = 0;
-            console.log("query", query)
             users = await userCol.find(query).sort({ modifiedOn: -1 }).toArray();
 
             return {
@@ -366,98 +399,51 @@ class UserApp extends PayApiBaseApp {
      */
     async handleCardOperations(req) {
         const {files } = req;
-        const { s3Client, log, options } = this;
-        const { s3Bucket } = options;
-        let s3Options = { bucket: s3Bucket };
+        const {log, options } = this;
 
-        const chars = [..."ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"];
-        let fileToken = [...Array(8)].map(i=>chars[Math.random()*chars.length|0]).join``;
 
         // Assume schema validation already happened before
         let doc = req.body;
         doc.type = doc.type || 'DIGITAL';
-        let fileKey ='';
 
         try {
-            // upload files
-            if(files && files.length) {
-                for(let file of files) {
-                    let ext = file.mimetype.split('/');
-                    let fileName = file.fieldname;
-                    fileKey = `user/${fileToken}.${ext[ext.length - 1]}`;
-                    let uploadResponse = await putJSONObjectAsync(s3Options, fileKey, file.buffer, file.mimetype, s3Client, log);
-                    if(!uploadResponse) {
-                        return createErrorResponse(500, 'image.upload.error', 'Error in uploading image.');
-                    }
-                    doc[fileName] = `${options.s3Url}/${fileKey}`;
-                }
-            }
 
             let {primaryUserId, _id, updateCurrentCard = false,...body} = doc;
 
 
-            // need to refreactor this part, either delete file if some error occured/do update ioperation to update the url
-
-
-            console.log("doc here", body)
-
-
             if(_id && updateCurrentCard) {
-                console.log("==================Updating user=====================", _id)
-                // update child
-                try {
-                    // let result =  await this.updateCard(_id, doc);
-                    // return {
-                    //     status: 200,
-                    //     content: result
-                    // };
-
-                    return await this.updateCard(_id, doc);
-
-                } catch(err) {
-                    console.log("error here", err)
-                }
+                console.log("Updating user...", _id)
+                return await this.updateCard(_id, doc, files);
             }
-            if(primaryUserId) {
-                console.log("=========Add Child=============", primaryUserId);
-                // if(!primaryUserId) {
-                //     return createErrorResponse(422, 'user.save.error', 'Primary User Id not present.');
-                // }
 
+            if(primaryUserId) {
+                console.log("Add Child...", primaryUserId);
                 // add child
                 body.primaryUserId = new ObjectId(primaryUserId);
                 body.isChild = true;
-                return await this.insertCard(body, body.email, false, false);
-
+                return await this.insertCard(body, body.email, false, false, files);
             }
 
-            console.log("===================Insert Primary Card=====================")
+            console.log("Insert Primary Card..")
             // Case : Add primary User
             let isAdmin = true, isPrimary = true;
-            let result = await this.insertCard(body, body.email, isAdmin, isPrimary);
-            console.log("RESULT HERE-----------------", result)
+            let result = await this.insertCard(body, body.email, isAdmin, isPrimary, files);
             if(result.status != 200 || !result.content) {
                 return result;
             }
             let profile = result.content;
 
-
-            // Since, this is a primary user, create a profile
-
+            console.log("Inserting profile..")
             const { db } = this;
             const userProfileCol = db.collection(USER_PROFILE_COL);
             profile.primaryUserId = new ObjectId(profile._id);
             profile.defaultCard = new ObjectId(profile._id);
             // profile.defaultCardType = defaultCardType;
             delete profile._id
-
-            console.log("profile here",profile)
             const insertedProfile = await userProfileCol.insertOne(profile, {});
             if (insertedProfile.acknowledged !== true || insertedProfile.insertedId == null) {
                 return createErrorResponse(500, 'user.profile.save.error', 'Error creating user profile');
             }
-            console.log("reuslt final", result)
-
             return {
                 status: 200,
                 content: profile
@@ -493,9 +479,7 @@ class UserApp extends PayApiBaseApp {
             }
 
             let payload = this.jwtUtil.decode(headers.jwtToken);
-            console.log("<<<<------------------payload--------------->>>>", payload);
             idToUpdate = payload.primaryUserId;
-            console.log("primaryUserId from jwt token", idToUpdate)
 
             // upload files
             if(files && files.length) {
@@ -513,18 +497,13 @@ class UserApp extends PayApiBaseApp {
 
             let {primaryUserId, _id, updateCurrentCard = false, ...body} = doc;
 
-            console.log("==========body=========", body)
-
-
             if(body.email) {
                 const query = {
                     primaryUserId: {$ne: new ObjectId(idToUpdate)},
                     email: body.email
                 };
                 let checkIfEmailExists = await userProfileCol.findOne(query);
-                console.log("check if email exists", checkIfEmailExists)
                 if (checkIfEmailExists) {
-                    console.log("email id already exists")
                     return createErrorResponse(409, 'user.email.exists', 'This email already exists.');
                 }
             }
@@ -532,8 +511,6 @@ class UserApp extends PayApiBaseApp {
             let query = {
                 primaryUserId : new ObjectId(idToUpdate)
             }
-
-            console.log("query here", query)
             const updateOptions = {
                 $set: {
                     active: true,
@@ -543,11 +520,9 @@ class UserApp extends PayApiBaseApp {
                     ...body
                 }
             };
-            console.log("update options", updateOptions)
             const writeResult = await userProfileCol.findOneAndUpdate(query, updateOptions, {
                 returnDocument: 'after'
             });
-            console.log("write result", writeResult)
             if (!writeResult) {
                 return createErrorResponse(400, 'profile.not.found', 'Could not identify prfile to update');
             }
@@ -578,14 +553,10 @@ class UserApp extends PayApiBaseApp {
 
         try {
             if(!headers.jwtToken || !doc.type) {
-                console.log("400", headers, doc.type)
                 return createErrorResponse(400, 'jwt.token.or.type.not.present', 'JWT token or type was not processed in the request');
             }
-            console.log("jwtToken", headers.jwtToken)
             let payload = this.jwtUtil.decode(headers.jwtToken);
-            console.log("<<<<------------------payload--------------->>>>", payload);
             let primaryUserId  = payload.primaryUserId;
-            console.log("primaryUserId from jwt token", primaryUserId)
 
             let {_id,...body} = doc;
             let collectionName = db.collection(USER_CONTACTS_COL);
@@ -622,11 +593,8 @@ class UserApp extends PayApiBaseApp {
     async getAnalyticsData(req){
         const { log, headers } = req;
         let { type, searchText } = req.query;
-        console.log("type here", type, searchText)
         let payload = this.jwtUtil.decode(headers.jwtToken);
-        console.log("<<<<------------------payload--------------->>>>", payload);
         let primaryUserId = payload.primaryUserId;
-        console.log("primaryUserId from jwt token", primaryUserId);
         let collectionName;
 
         if(!primaryUserId || !type) {
@@ -651,7 +619,6 @@ class UserApp extends PayApiBaseApp {
                 ]
             }
 
-            console.log("query get", query)
             let data = await collectionName.find(query).sort({ modifiedOn: -1 }).toArray();
 
             return {
@@ -672,10 +639,7 @@ class UserApp extends PayApiBaseApp {
         const { log, headers } = req;
 
         let payload = this.jwtUtil.decode(headers.jwtToken);
-        console.log("<<<<------------------payload--------------->>>>", payload);
         let primaryUserId = payload.primaryUserId;
-        console.log("primaryUserId from jwt token", primaryUserId)
-
         const userProfileCol = this.db.collection(USER_PROFILE_COL);
         const userCol = this.db.collection(USER_COL);
         const analyticsCol = this.db.collection(USER_CONTACTS_COL);
@@ -687,8 +651,6 @@ class UserApp extends PayApiBaseApp {
             let query = {
                 primaryUserId : new ObjectId(primaryUserId)
             };
-
-            console.log("query", query)
             let user = await userProfileCol.findOne(query);
             if(!user){
                 log.error(`user not found`);
@@ -744,7 +706,6 @@ class UserApp extends PayApiBaseApp {
     async getDashboardData(req) {
         const { log, headers } = req;
         let { type = 'HOME' } = req.query;
-        console.log("type here", type)
         // here we need to check if it is the admin
 
         // let payload = this.jwtUtil.decode(headers.jwtToken);
