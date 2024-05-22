@@ -12,6 +12,7 @@ const
     session = require('express-session'),
     path = require('path'),
     fs = require('fs'),
+    bcrypt = require('bcryptjs'),
 {   appendS3Options, initS3Client, uploadFile, putJSONObjectAsync, initS3CmdLineOptions} = require('../../lib/s3-utils'),
     asMain = (require.main === module);
 
@@ -112,53 +113,82 @@ class UserApp extends PayApiBaseApp {
         const {log, body} = req;
         const reqId = req.id || 0;
         const userCol = this.db.collection(USER_COL);
-        const { token, primaryUserId } = body;
+        let { token, primaryUserId, email, type = 'GOOGLE', password } = body;
+        console.log("body", body)
         console.log("credential", token, "audience", audience)
         try {
-            let response = await gapiClient.verifyIdToken({ idToken: token, audience });
-            let payload = response.getPayload();
+            if(type == 'GOOGLE') {
+                let response = await gapiClient.verifyIdToken({ idToken: token, audience });
+                let payload = response.getPayload();
+                if(!payload || !payload.email) {
+                    return createErrorResponse(500, 'user.login.error', 'Error getting response from token');
 
-            if(payload && payload.email) {
-                if(primaryUserId) {
-                    let query = {
-                        primaryUserId : new ObjectId(primaryUserId)
-                    }
-                    let user = await userCol.findOne(query, {email : 1});
-                    if(!user  || user.email !== payload.email ) {
-                        return createErrorResponse(400, 'user.email.mismatch', 'Onboarding email is different from signup email');
-                    }
                 }
-
-                let query = {}
-                if(primaryUserId) {
-                    query.primaryUserId = new ObjectId(primaryUserId);
-                } else {
-                    query.email = payload.email
-                }
-                let updateOptions = {
-                    $set : {
-                        loginAt : new Date()
-                    }
-                }
-                let user = await userCol.findOneAndUpdate(query, updateOptions, { returnDocument: "after" });
-                let jwtPayload = {
-                    primaryUserId: user._id
-                }
-
-                const jwt = this.jwtUtil.encode(jwtPayload);
-
-                // create jwt
-                return {
-                    status: 200,
-                    content: {
-                        jwtToken: jwt,
-                        userDetails: user
-                    }
-                };
-
-            } else {
-                return createErrorResponse(500, 'user.login.error', 'Error getting response from token');
+                email = payload.email
             }
+            if(primaryUserId) {
+                let query = {
+                    _id : new ObjectId(primaryUserId)
+                }
+
+                let user = await userCol.findOne(query, {email : 1});
+                if(!user  || user.email !== email ) {
+                    return createErrorResponse(400, 'user.email.mismatch', 'Onboarding email is different from signup email');
+                }
+            }
+
+            let query = {}
+            if(primaryUserId) {
+                query._id = new ObjectId(primaryUserId);
+            } else {
+                query.email = email
+            }
+
+            if(type == 'EMAIL') {
+                let userDetails = await userCol.findOne(query)
+                if(!userDetails) {
+                    return createErrorResponse(400, 'email.does.not.exist', 'Email does not exist');
+                }
+                if(userDetails.password) {
+                    const isMatch = await bcrypt.compare(password, userDetails.password);
+                    if (!isMatch) {
+                        return createErrorResponse(400, 'incorrect.password.or.email', 'Please enter valid email id and passworkd');
+                    }
+                } else {
+                    const salt = await bcrypt.genSalt(10);
+                    password = await bcrypt.hash(password, salt);
+                }
+            }
+
+            let updateOptions = {
+                $set : {
+                    loginAt : new Date()
+                }
+            }
+            if(type == 'EMAIL') {
+                updateOptions["$set"]["password"] = password;
+            }
+
+            console.log("query here", {query, updateOptions})
+            let user = await userCol.findOneAndUpdate(query, updateOptions, { returnDocument: "after" });
+            let jwtPayload = {
+                primaryUserId: user._id
+            }
+
+            const jwt = this.jwtUtil.encode(jwtPayload);
+
+            delete user.password;
+
+            // create jwt
+            return {
+                status: 200,
+                content: {
+                    jwtToken: jwt,
+                    userDetails: user
+                }
+            };
+
+
 
         } catch (e) {
             log.error('user login error', e, {});
