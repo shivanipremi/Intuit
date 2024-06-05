@@ -12,6 +12,7 @@ const
     session = require('express-session'),
     path = require('path'),
     fs = require('fs'),
+    axios = require('axios'),
     bcrypt = require('bcryptjs'),
 {   appendS3Options, initS3Client, uploadFile, putJSONObjectAsync, initS3CmdLineOptions} = require('../../lib/s3-utils'),
     asMain = (require.main === module);
@@ -125,6 +126,12 @@ class UserApp extends PayApiBaseApp {
 
                 }
                 email = payload.email
+            } else if(type == 'FACEBOOK') {
+                const response = await axios.get(`https://graph.facebook.com/me?access_token=${token}&fields=id,name,email`);
+                console.log("RESPONSE HERE====", response);
+                if(response) {
+                    email = response.email;
+                }
             }
             if(primaryUserId) {
                 let query = {
