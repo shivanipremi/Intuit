@@ -755,14 +755,16 @@ class UserApp extends PayApiBaseApp {
         // let primaryUserId = payload.primaryUserId;
         // console.log("primaryUserId from jwt token", primaryUserId);
         const userProfileCol = this.db.collection(USER_PROFILE_COL);
-        let analyticsCol = this.db.collection(USER_CONTACTS_COL)
+        const analyticsCol = this.db.collection(USER_CONTACTS_COL);
+        const userCol = this.db.collection(USER_COL);
+
         let result;
 
         try {
 
             if(type == 'HOME') {
                 let ordersQuery = {
-                    type: 'ORDERS'
+                    type: 'NFC'
                 }
                 let contactsQuery = {
                     type: 'CONTACTS'
@@ -797,7 +799,7 @@ class UserApp extends PayApiBaseApp {
 
                 let [users, orders, totalLeads, totalContacts, totalLinkVisitedTimes] = await Promise.all([
                     userProfileCol.aggregate(aggregateQuery).toArray(),
-                    analyticsCol.find(ordersQuery, {modifiedOn : -1}).toArray(),
+                    userCol.find(ordersQuery, {modifiedOn : -1}).toArray(),
                     analyticsCol.countDocuments(leadQuery),
                     analyticsCol.countDocuments(contactsQuery),
                     analyticsCol.countDocuments(visitedLinksQuery)
