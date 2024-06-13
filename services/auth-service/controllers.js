@@ -848,19 +848,23 @@ class UserApp extends PayApiBaseApp {
             primaryUserId = payload.primaryUserId;
         }
         const userCol = this.db.collection(USER_COL);
-        if(!id && !primaryUserId) {
-            log.error("Either id/primaryUserId should be present in the request");
-            return createErrorResponse(400, 'card.id.primaryUserId.missing', 'Either id/primaryUserId should be present in the request');
+        if((!id && !primaryUserId) || !amount || !currency) {
+            log.error("All mandatory fields should be present in the request");
+            return createErrorResponse(400, 'mandatory.fields.not.present', 'Some of the mandatory fields are not present');
         }
         try {
+            let paymentIntent;
                 // Create a PaymentIntent with Stripe
-            const paymentIntent = await stripe.paymentIntents.create({
+            try {
+                paymentIntent = await stripe.paymentIntents.create({
                     amount,
                     currency,
-            });
+                });
 
-                // Return the client secret to the frontend
-            console.log("CHARGE HERE============", paymentIntent)
+            } catch(err) {
+                log.error(`error making payment for (id- ${primaryUserId} )`, err, {});
+                return createErrorResponse(500, 'stripe.payment.error', 'Error doing payment with stripe');
+            }
 
             let query ={};
 
@@ -884,7 +888,8 @@ class UserApp extends PayApiBaseApp {
                 currency,
             }
             console.log("payment here", payment)
-            await userCol.findOneAndUpdate(query, {$set : payment}, { returnDocument: 'after'})
+            let updatedUser = await userCol.findOneAndUpdate(query, {$set : payment}, { returnDocument: 'after'})
+            console.log("updated user here", updatedUser)
 
             return {
                 status: 200,
