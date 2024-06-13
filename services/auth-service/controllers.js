@@ -842,7 +842,7 @@ class UserApp extends PayApiBaseApp {
      */
     async makePayment(req){
         const { log, headers } = req;
-        let { id, primaryUserId, amount, currency, source, description} = req.body;
+        let { id, primaryUserId, amount, currency} = req.body;
         if(headers.jwtToken) {
             let payload = this.jwtUtil.decode(headers.jwtToken);
             primaryUserId = payload.primaryUserId;
@@ -853,15 +853,14 @@ class UserApp extends PayApiBaseApp {
             return createErrorResponse(400, 'card.id.primaryUserId.missing', 'Either id/primaryUserId should be present in the request');
         }
         try {
-
-            const charge = await stripe.charges.create({
-                amount,
-                currency,
-                source,
-                description
+                // Create a PaymentIntent with Stripe
+            const paymentIntent = await stripe.paymentIntents.create({
+                    amount,
+                    currency,
             });
 
-            console.log("CHARGE HERE============", charge)
+                // Return the client secret to the frontend
+            console.log("CHARGE HERE============", paymentIntent)
 
             let query ={};
 
@@ -883,16 +882,13 @@ class UserApp extends PayApiBaseApp {
                 paymentDate :new Date(),
                 amount,
                 currency,
-                description,
-                source,
-                charge
             }
             console.log("payment here", payment)
-            let userData = await userCol.findOneAndUpdate(query, {$set : payment}, { returnDocument: 'after'})
+            await userCol.findOneAndUpdate(query, {$set : payment}, { returnDocument: 'after'})
 
             return {
                 status: 200,
-                content: userData
+                content: { clientSecret: paymentIntent.client_secret }
             }
 
         } catch (e) {
