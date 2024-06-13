@@ -14,9 +14,13 @@ const
     fs = require('fs'),
     axios = require('axios'),
     bcrypt = require('bcryptjs'),
+    stripe = require('stripe')(process.env.STRIPE_SECRET_KEY),
 {   appendS3Options, initS3Client, uploadFile, putJSONObjectAsync, initS3CmdLineOptions} = require('../../lib/s3-utils'),
     asMain = (require.main === module);
 
+
+
+console.log("=============", process.env.STRIPE_SECRET_KEY)
 let gapiClient;
 let audience;
 
@@ -99,7 +103,9 @@ class UserApp extends PayApiBaseApp {
         router.post('/profile/update', validateJwt, uploadFile(5000000).any('image'), invokeAsync(this.updateProfile));
         router.post('/contact', validateJwt, invokeAsync(this.saveAnlayticsData));
         router.get("/contacts", validateJwt, invokeAsync(this.getAnalyticsData))
-        router.get("/dashboard", validateJwt, invokeAsync(this.getDashboardData))
+        router.get("/dashboard", validateJwt, invokeAsync(this.getDashboardData));
+        router.post("/payment", validateJwt, invokeAsync(this.makePayment))
+
     }
 
 
@@ -825,6 +831,73 @@ class UserApp extends PayApiBaseApp {
         } catch (e) {
             log.error(`error finding data`, e, {});
             return createErrorResponse(500, 'data.find.error', 'Error finding data');
+        }
+    }
+
+
+    /**
+     * Get user by Id
+     * @param req
+     * @returns {Promise <*>}
+     */
+    async makePayment(req){
+        const { log, headers } = req;
+        let { id, primaryUserId, amount, currency, source, description} = req.body;
+        if(headers.jwtToken) {
+            let payload = this.jwtUtil.decode(headers.jwtToken);
+            primaryUserId = payload.primaryUserId;
+        }
+        const userCol = this.db.collection(USER_COL);
+        if(!id && !primaryUserId) {
+            log.error("Either id/primaryUserId should be present in the request");
+            return createErrorResponse(400, 'card.id.primaryUserId.missing', 'Either id/primaryUserId should be present in the request');
+        }
+        try {
+
+            const charge = await stripe.charges.create({
+                amount,
+                currency,
+                source,
+                description
+            });
+
+            console.log("CHARGE HERE============", charge)
+
+            let query ={};
+
+            if(primaryUserId) {
+                query = {
+                 _id: new ObjectId(primaryUserId)
+                    // $or: [
+                    //     { _id: new ObjectId(primaryUserId) }, // Matching documents with _id equal to primaryUserId
+                    //     { primaryUserId: new ObjectId(primaryUserId) } // Matching documents with primaryUserId field equal to primaryUserId
+                    // ]
+                };
+            }
+            if(id) {
+                query._id = new ObjectId(id);
+            }
+            // query.type = type;
+            query.isDeleted = 0;
+            let payment = {
+                paymentDate :new Date(),
+                amount,
+                currency,
+                description,
+                source,
+                charge
+            }
+            console.log("payment here", payment)
+            let userData = await userCol.findOneAndUpdate(query, {$set : payment}, { returnDocument: 'after'})
+
+            return {
+                status: 200,
+                content: userData
+            }
+
+        } catch (e) {
+            log.error(`error finding user(id- ${id} )`, e, {});
+            return createErrorResponse(500, 'user.find.error', 'Error finding user');
         }
     }
 
