@@ -158,7 +158,7 @@ class UserApp extends PayApiBaseApp {
             }
 
             if(type == 'EMAIL') {
-                let userDetails = await userCol.findOne(query)
+                let userDetails = await userCol.findOne(query);
                 if(!userDetails) {
                     return createErrorResponse(400, 'email.does.not.exist', 'Email does not exist');
                 }
@@ -167,6 +167,7 @@ class UserApp extends PayApiBaseApp {
                     if (!isMatch) {
                         return createErrorResponse(400, 'incorrect.password.or.email', 'Please enter valid email id and passworkd');
                     }
+                    password = userDetails.password;
                 } else {
                     const salt = await bcrypt.genSalt(10);
                     password = await bcrypt.hash(password, salt);
@@ -734,6 +735,9 @@ class UserApp extends PayApiBaseApp {
             user.totalContacts = totalContacts;
             user.totalLeads = totalLeads;
             user.totalLinkVisitedTimes = totalLinkVisitedTimes;
+
+            delete user.password;
+
 
             return {
                 status: 200,
