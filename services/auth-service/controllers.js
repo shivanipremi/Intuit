@@ -63,7 +63,7 @@ const USER_COL = 'cards';
 const USER_PROFILE_COL = 'users';
 const USER_CONTACTS_COL = 'contacts';
 const USER_LEADS_COL = 'leads'
-const uploadDir = path.join(__dirname, '../../../uploads');
+const uploadDir = path.join(__dirname, '../../uploads');
 
 
 
