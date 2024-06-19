@@ -512,6 +512,7 @@ class UserApp extends PayApiBaseApp {
     async updateProfile(req) {
 
         const {files, log, headers} = req;
+        console.log("FILES HERE", files)
         const { s3Client, options, db } = this;
         const userProfileCol = db.collection(USER_PROFILE_COL);
         const { s3Bucket } = options;
@@ -531,18 +532,19 @@ class UserApp extends PayApiBaseApp {
             idToUpdate = payload.primaryUserId;
 
             // upload files
-            if(files && files.length) {
-                for(let file of files) {
-                    let ext = file.mimetype.split('/');
-                    let fileName = file.fieldname;
-                    fileKey = `user/${fileToken}.${ext[ext.length - 1]}`;
-                    let uploadResponse = await putJSONObjectAsync(s3Options, fileKey, file.buffer, file.mimetype, s3Client, log);
-                    if(!uploadResponse) {
-                        return createErrorResponse(500, 'image.upload.error', 'Error in uploading image.');
-                    }
-                    doc[fileName] = `${options.s3Url}/${fileKey}`;
-                }
-            }
+            // if(files && files.length) {
+            //     for(let file of files) {
+            //         let ext = file.mimetype.split('/');
+            //         let fileName = file.fieldname;
+            //         fileKey = `user/${fileToken}.${ext[ext.length - 1]}`;
+            //         let uploadResponse = await putJSONObjectAsync(s3Options, fileKey, file.buffer, file.mimetype, s3Client, log);
+            //         if(!uploadResponse) {
+            //             return createErrorResponse(500, 'image.upload.error', 'Error in uploading image.');
+            //         }
+            //         doc[fileName] = `${options.s3Url}/${fileKey}`;
+            //     }
+            // }
+
 
             let {primaryUserId, _id, updateCurrentCard = false, ...body} = doc;
 
@@ -556,6 +558,7 @@ class UserApp extends PayApiBaseApp {
                     return createErrorResponse(409, 'user.email.exists', 'This email already exists.');
                 }
             }
+            const filesUploaded = await this.uploadFilesToServer(files, options.appHost, options.port);
 
             let query = {
                 primaryUserId : new ObjectId(idToUpdate)
@@ -566,7 +569,8 @@ class UserApp extends PayApiBaseApp {
                     modifiedBy: 'demo',
                     modifiedOn: new Date(),
                     createdOn : new Date(),
-                    ...body
+                    ...body,
+                    ...filesUploaded
                 }
             };
             const writeResult = await userProfileCol.findOneAndUpdate(query, updateOptions, {
