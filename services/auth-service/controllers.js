@@ -38,6 +38,9 @@ function parseOptions(argv) {
         .option('--google-client-secret <client secret>', 'Google client ID')
         .option('--validate-jwt <validate-jwt>', 'Validate JWT - true/false', parseBooleanParam, false)
         .option('--app-host <app-host>', 'App Host')
+        .option('--ssl-key <ssl-key>', 'SSl key')
+        .option('--ssl-cert <ssl-key>', 'ssl cert')
+
 
 
     appendS3Options(options);
