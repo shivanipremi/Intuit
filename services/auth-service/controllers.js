@@ -900,7 +900,7 @@ class UserApp extends PayApiBaseApp {
 
             if(primaryUserId) {
                 query = {
-                    _id: new ObjectId(primaryUserId)
+                    primaryUserId: new ObjectId(primaryUserId)
                     // $or: [
                     //     { _id: new ObjectId(primaryUserId) }, // Matching documents with _id equal to primaryUserId
                     //     { primaryUserId: new ObjectId(primaryUserId) } // Matching documents with primaryUserId field equal to primaryUserId
@@ -920,7 +920,7 @@ class UserApp extends PayApiBaseApp {
             let updatedUser = userProfileCol.findOneAndUpdate(query, {$set : {payment}}, { returnDocument: 'after'})
            let collectionsToUpdates = [updatedUser]
             if(id) {
-                let updatedNfc = userCol.findOneAndUpdate({_id : new ObjectId(id), isDeleted : 0}, {$set : payment}, { returnDocument: 'after'})
+                let updatedNfc = userCol.findOneAndUpdate({_id : new ObjectId(id), isDeleted : 0}, {$set : {payment}}, { returnDocument: 'after'})
                 collectionsToUpdates.push(updatedNfc)
             }
             let result = await Promise.all(collectionsToUpdates);
@@ -963,10 +963,7 @@ class UserApp extends PayApiBaseApp {
             // Create a PaymentIntent with Stripe
             try {
                 session = await stripe.checkout.sessions.retrieve(sessionId);
-
-                console.log("session here", session)
                 paymentStatus = session.payment_status;
-                console.log("session here", session);
 
             } catch(err) {
                 log.error(`error making payment for (id- ${primaryUserId} )`, err, {});
@@ -977,7 +974,7 @@ class UserApp extends PayApiBaseApp {
 
             if(primaryUserId) {
                 query = {
-                    _id: new ObjectId(primaryUserId)
+                    primaryUserId: new ObjectId(primaryUserId)
                     // $or: [
                     //     { _id: new ObjectId(primaryUserId) }, // Matching documents with _id equal to primaryUserId
                     //     { primaryUserId: new ObjectId(primaryUserId) } // Matching documents with primaryUserId field equal to primaryUserId
