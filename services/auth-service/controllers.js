@@ -862,6 +862,7 @@ class UserApp extends PayApiBaseApp {
             let payload = this.jwtUtil.decode(headers.jwtToken);
             primaryUserId = payload.primaryUserId;
         }
+        const userProfileCol = this.db.collection(USER_PROFILE_COL);
         const userCol = this.db.collection(USER_COL);
         if(!primaryUserId || !amount || !currency) {
             log.error("All mandatory fields should be present in the request");
@@ -916,7 +917,7 @@ class UserApp extends PayApiBaseApp {
                 productName
             }
             console.log("payment here", payment)
-            let updatedUser = userCol.findOneAndUpdate(query, {$set : {payment}}, { returnDocument: 'after'})
+            let updatedUser = userProfileCol.findOneAndUpdate(query, {$set : {payment}}, { returnDocument: 'after'})
            let collectionsToUpdates = [updatedUser]
             if(id) {
                 let updatedNfc = userCol.findOneAndUpdate({_id : new ObjectId(id), isDeleted : 0}, {$set : payment}, { returnDocument: 'after'})
@@ -952,6 +953,7 @@ class UserApp extends PayApiBaseApp {
             primaryUserId = payload.primaryUserId;
         }
         const userCol = this.db.collection(USER_COL);
+        const userProfileCol = this.db.collection(USER_PROFILE_COL);
         if(!primaryUserId || !sessionId) {
             log.error("All mandatory fields should be present in the request");
             return createErrorResponse(400, 'mandatory.fields.not.present', 'Some of the mandatory fields are not present');
@@ -991,7 +993,7 @@ class UserApp extends PayApiBaseApp {
                 }
             }
 
-            let updatedUser = userCol.findOneAndUpdate(query, updateQuery, { returnDocument: 'after'})
+            let updatedUser = userProfileCol.findOneAndUpdate(query, updateQuery, { returnDocument: 'after'})
             console.log("updated user here", updatedUser);
             let collectionsToUpdates = [updatedUser];
 
