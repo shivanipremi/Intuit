@@ -900,7 +900,7 @@ class UserApp extends PayApiBaseApp {
 
             if(primaryUserId) {
                 query = {
-                    primaryUserId: new ObjectId(primaryUserId)
+                    _id: new ObjectId(primaryUserId)
                     // $or: [
                     //     { _id: new ObjectId(primaryUserId) }, // Matching documents with _id equal to primaryUserId
                     //     { primaryUserId: new ObjectId(primaryUserId) } // Matching documents with primaryUserId field equal to primaryUserId
@@ -916,7 +916,7 @@ class UserApp extends PayApiBaseApp {
                 currency,
                 productName
             }
-            console.log("payment here", payment)
+            console.log("payment here", payment, query)
             let updatedUser = userProfileCol.findOneAndUpdate(query, {$set : {payment}}, { returnDocument: 'after'})
            let collectionsToUpdates = [updatedUser]
             if(id) {
@@ -977,7 +977,7 @@ class UserApp extends PayApiBaseApp {
 
             if(primaryUserId) {
                 query = {
-                    primaryUserId: new ObjectId(primaryUserId)
+                    _id: new ObjectId(primaryUserId)
                     // $or: [
                     //     { _id: new ObjectId(primaryUserId) }, // Matching documents with _id equal to primaryUserId
                     //     { primaryUserId: new ObjectId(primaryUserId) } // Matching documents with primaryUserId field equal to primaryUserId
@@ -992,6 +992,8 @@ class UserApp extends PayApiBaseApp {
                     "payment.status": paymentStatus
                 }
             }
+
+            console.log("query", query)
 
             let updatedUser = userProfileCol.findOneAndUpdate(query, updateQuery, { returnDocument: 'after'})
             console.log("updated user here", updatedUser);
