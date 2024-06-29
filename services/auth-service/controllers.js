@@ -986,7 +986,6 @@ class UserApp extends PayApiBaseApp {
                 }
             }
 
-            console.log("payment here", payment)
             let updatedUser = userCol.findOneAndUpdate(query, updateQuery, { returnDocument: 'after'})
             let updatedNfc = userCol.findOneAndUpdate({_id : new ObjectId(id), isDeleted : 0}, updateQuery, { returnDocument: 'after'})
             console.log("updated user here", updatedUser)
