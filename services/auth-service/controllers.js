@@ -994,7 +994,9 @@ class UserApp extends PayApiBaseApp {
 
             return {
                 status: 200,
-                content: 'Updated successfully.'
+                content: {
+                    message: 'Updated successfully.'
+                }
             }
 
         } catch (e) {
