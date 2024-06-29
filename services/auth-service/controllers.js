@@ -853,7 +853,8 @@ class UserApp extends PayApiBaseApp {
      */
     async makePayment(req){
         const { log, headers } = req;
-        let { id, primaryUserId, amount, currency} = req.body;
+        let { id, primaryUserId, amount, success_url, cancel_url, currency, productName} = req.body;
+
         if(headers.jwtToken) {
             let payload = this.jwtUtil.decode(headers.jwtToken);
             primaryUserId = payload.primaryUserId;
@@ -864,13 +865,27 @@ class UserApp extends PayApiBaseApp {
             return createErrorResponse(400, 'mandatory.fields.not.present', 'Some of the mandatory fields are not present');
         }
         try {
-            let paymentIntent;
-                // Create a PaymentIntent with Stripe
+            let session;
+            // Create a PaymentIntent with Stripe
             try {
-                paymentIntent = await stripe.paymentIntents.create({
-                    amount,
-                    currency,
+                session = await stripe.checkout.sessions.create({
+                    payment_method_types: ['card'],
+                    line_items: [{
+                        price_data: {
+                            currency: currency,
+                            product_data: {
+                                name: productName,
+                            },
+                            unit_amount: amount, // Amount in cents
+                        },
+                        quantity: 1,
+                    }],
+                    mode: 'payment',
+                    success_url: success_url,
+                    cancel_url: cancel_url,
                 });
+
+                console.log("session here", session);
 
             } catch(err) {
                 log.error(`error making payment for (id- ${primaryUserId} )`, err, {});
@@ -881,7 +896,7 @@ class UserApp extends PayApiBaseApp {
 
             if(primaryUserId) {
                 query = {
-                 _id: new ObjectId(primaryUserId)
+                    _id: new ObjectId(primaryUserId)
                     // $or: [
                     //     { _id: new ObjectId(primaryUserId) }, // Matching documents with _id equal to primaryUserId
                     //     { primaryUserId: new ObjectId(primaryUserId) } // Matching documents with primaryUserId field equal to primaryUserId
@@ -897,6 +912,7 @@ class UserApp extends PayApiBaseApp {
                 paymentDate :new Date(),
                 amount,
                 currency,
+                productName
             }
             console.log("payment here", payment)
             let updatedUser = await userCol.findOneAndUpdate(query, {$set : payment}, { returnDocument: 'after'})
@@ -904,7 +920,7 @@ class UserApp extends PayApiBaseApp {
 
             return {
                 status: 200,
-                content: { clientSecret: paymentIntent.client_secret }
+                content: { id: session.id }
             }
 
         } catch (e) {
