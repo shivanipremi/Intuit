@@ -17,6 +17,7 @@ const
     stripe = require('stripe')(process.env.STRIPE_SECRET_KEY),
 {   appendS3Options, initS3Client, uploadFile, putJSONObjectAsync, initS3CmdLineOptions} = require('../../lib/s3-utils'),
     asMain = (require.main === module);
+const {readdirSync} = require("fs");
 
 
 
@@ -862,7 +863,7 @@ class UserApp extends PayApiBaseApp {
             primaryUserId = payload.primaryUserId;
         }
         const userCol = this.db.collection(USER_COL);
-        if(!id || !primaryUserId || !amount || !currency) {
+        if(!primaryUserId || !amount || !currency) {
             log.error("All mandatory fields should be present in the request");
             return createErrorResponse(400, 'mandatory.fields.not.present', 'Some of the mandatory fields are not present');
         }
@@ -916,10 +917,14 @@ class UserApp extends PayApiBaseApp {
             }
             console.log("payment here", payment)
             let updatedUser = userCol.findOneAndUpdate(query, {$set : payment}, { returnDocument: 'after'})
-            let updatedNfc = userCol.findOneAndUpdate({_id : new ObjectId(id), isDeleted : 0}, {$set : payment}, { returnDocument: 'after'})
-            console.log("updated user here", updatedUser)
-            let result = await Promise.all([updatedUser, updatedNfc]);
-            console.log("updated result here", result)
+           let collectionsToUpdates = [updatedUser]
+            if(id) {
+                let updatedNfc = userCol.findOneAndUpdate({_id : new ObjectId(id), isDeleted : 0}, updateQuery, { returnDocument: 'after'})
+                collectionsToUpdates.push(updatedNfc)
+            }
+            let result = await Promise.all(collectionsToUpdates);
+
+            console.log("updated result", result)
 
             return {
                 status: 200,
@@ -947,7 +952,7 @@ class UserApp extends PayApiBaseApp {
             primaryUserId = payload.primaryUserId;
         }
         const userCol = this.db.collection(USER_COL);
-        if(!id || !primaryUserId || !sessionId) {
+        if(!primaryUserId || !sessionId) {
             log.error("All mandatory fields should be present in the request");
             return createErrorResponse(400, 'mandatory.fields.not.present', 'Some of the mandatory fields are not present');
         }
@@ -987,9 +992,14 @@ class UserApp extends PayApiBaseApp {
             }
 
             let updatedUser = userCol.findOneAndUpdate(query, updateQuery, { returnDocument: 'after'})
-            let updatedNfc = userCol.findOneAndUpdate({_id : new ObjectId(id), isDeleted : 0}, updateQuery, { returnDocument: 'after'})
-            console.log("updated user here", updatedUser)
-            let result = await Promise.all([updatedUser, updatedNfc]);
+            console.log("updated user here", updatedUser);
+            let collectionsToUpdates = [updatedUser];
+
+            if(id) {
+                let updatedNfc = userCol.findOneAndUpdate({_id : new ObjectId(id), isDeleted : 0}, updateQuery, { returnDocument: 'after'})
+                collectionsToUpdates.push(updatedNfc)
+            }
+            let result = await Promise.all(collectionsToUpdates);
             console.log("updated result here", result)
 
             return {
