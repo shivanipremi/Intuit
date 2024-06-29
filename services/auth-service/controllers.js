@@ -107,7 +107,9 @@ class UserApp extends PayApiBaseApp {
         router.post('/contact', validateJwt, invokeAsync(this.saveAnlayticsData));
         router.get("/contacts", validateJwt, invokeAsync(this.getAnalyticsData))
         router.get("/dashboard", validateJwt, invokeAsync(this.getDashboardData));
-        router.post("/payment", validateJwt, invokeAsync(this.makePayment))
+        router.post("/payment", validateJwt, invokeAsync(this.makePayment));
+        router.post("/verifyPayment", validateJwt, invokeAsync(this.verifyPayment))
+
 
     }
 
@@ -860,7 +862,7 @@ class UserApp extends PayApiBaseApp {
             primaryUserId = payload.primaryUserId;
         }
         const userCol = this.db.collection(USER_COL);
-        if((!id && !primaryUserId) || !amount || !currency) {
+        if(!id || !primaryUserId || !amount || !currency) {
             log.error("All mandatory fields should be present in the request");
             return createErrorResponse(400, 'mandatory.fields.not.present', 'Some of the mandatory fields are not present');
         }
@@ -903,9 +905,7 @@ class UserApp extends PayApiBaseApp {
                     // ]
                 };
             }
-            if(id) {
-                query._id = new ObjectId(id);
-            }
+
             // query.type = type;
             query.isDeleted = 0;
             let payment = {
@@ -915,12 +915,87 @@ class UserApp extends PayApiBaseApp {
                 productName
             }
             console.log("payment here", payment)
-            let updatedUser = await userCol.findOneAndUpdate(query, {$set : payment}, { returnDocument: 'after'})
+            let updatedUser = userCol.findOneAndUpdate(query, {$set : payment}, { returnDocument: 'after'})
+            let updatedNfc = userCol.findOneAndUpdate({_id : new ObjectId(id), isDeleted : 0}, {$set : payment}, { returnDocument: 'after'})
             console.log("updated user here", updatedUser)
+            let result = await Promise.all([updatedUser, updatedNfc]);
+            console.log("updated result here", result)
 
             return {
                 status: 200,
                 content: { id: session.id }
+            }
+
+        } catch (e) {
+            log.error(`error finding user(id- ${id} )`, e, {});
+            return createErrorResponse(500, 'user.find.error', 'Error finding user');
+        }
+    }
+
+
+    /**
+     * verify Payment
+     * @param req
+     * @returns {Promise <*>}
+     */
+    async verifyPayment(req){
+        const { log, headers } = req;
+        let { id, primaryUserId, sessionId} = req.body;
+
+        if(headers.jwtToken) {
+            let payload = this.jwtUtil.decode(headers.jwtToken);
+            primaryUserId = payload.primaryUserId;
+        }
+        const userCol = this.db.collection(USER_COL);
+        if(!id || !primaryUserId || !sessionId) {
+            log.error("All mandatory fields should be present in the request");
+            return createErrorResponse(400, 'mandatory.fields.not.present', 'Some of the mandatory fields are not present');
+        }
+        try {
+            let session, paymentStatus;
+            // Create a PaymentIntent with Stripe
+            try {
+                session = await stripe.checkout.sessions.retrieve(sessionId);
+
+                console.log("session here", session)
+                paymentStatus = session.payment_status;
+                console.log("session here", session);
+
+            } catch(err) {
+                log.error(`error making payment for (id- ${primaryUserId} )`, err, {});
+                return createErrorResponse(500, 'stripe.payment.error', 'Error doing payment with stripe');
+            }
+
+            let query ={};
+
+            if(primaryUserId) {
+                query = {
+                    _id: new ObjectId(primaryUserId)
+                    // $or: [
+                    //     { _id: new ObjectId(primaryUserId) }, // Matching documents with _id equal to primaryUserId
+                    //     { primaryUserId: new ObjectId(primaryUserId) } // Matching documents with primaryUserId field equal to primaryUserId
+                    // ]
+                };
+            }
+
+            // query.type = type;
+            query.isDeleted = 0;
+            let updateQuery = {
+                $set : {
+                    "payment.status": paymentStatus
+                }
+            }
+
+            console.log("payment here", payment)
+            let updatedUser = userCol.findOneAndUpdate(query, updateQuery, { returnDocument: 'after'})
+            let updatedNfc = userCol.findOneAndUpdate({_id : new ObjectId(id), isDeleted : 0}, updateQuery, { returnDocument: 'after'})
+            console.log("updated user here", updatedUser)
+            let result = await Promise.all([updatedUser, updatedNfc]);
+            console.log("updated result here", result)
+
+            return {
+                status: 200,
+                content: 'Updated successfully.'
             }
 
         } catch (e) {
