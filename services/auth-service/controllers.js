@@ -916,7 +916,7 @@ class UserApp extends PayApiBaseApp {
                 productName
             }
             console.log("payment here", payment)
-            let updatedUser = userCol.findOneAndUpdate(query, {$set : payment}, { returnDocument: 'after'})
+            let updatedUser = userCol.findOneAndUpdate(query, {$set : {payment}}, { returnDocument: 'after'})
            let collectionsToUpdates = [updatedUser]
             if(id) {
                 let updatedNfc = userCol.findOneAndUpdate({_id : new ObjectId(id), isDeleted : 0}, {$set : payment}, { returnDocument: 'after'})
