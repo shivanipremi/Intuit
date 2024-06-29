@@ -919,7 +919,7 @@ class UserApp extends PayApiBaseApp {
             let updatedUser = userCol.findOneAndUpdate(query, {$set : payment}, { returnDocument: 'after'})
            let collectionsToUpdates = [updatedUser]
             if(id) {
-                let updatedNfc = userCol.findOneAndUpdate({_id : new ObjectId(id), isDeleted : 0}, updateQuery, { returnDocument: 'after'})
+                let updatedNfc = userCol.findOneAndUpdate({_id : new ObjectId(id), isDeleted : 0}, {$set : payment}, { returnDocument: 'after'})
                 collectionsToUpdates.push(updatedNfc)
             }
             let result = await Promise.all(collectionsToUpdates);
