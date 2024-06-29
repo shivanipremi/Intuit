@@ -900,7 +900,7 @@ class UserApp extends PayApiBaseApp {
 
             if(primaryUserId) {
                 query = {
-                    _id: new ObjectId(primaryUserId)
+                    primaryUserId: new ObjectId(primaryUserId)
                     // $or: [
                     //     { _id: new ObjectId(primaryUserId) }, // Matching documents with _id equal to primaryUserId
                     //     { primaryUserId: new ObjectId(primaryUserId) } // Matching documents with primaryUserId field equal to primaryUserId
@@ -977,7 +977,7 @@ class UserApp extends PayApiBaseApp {
 
             if(primaryUserId) {
                 query = {
-                    _id: new ObjectId(primaryUserId)
+                    primaryUserId: new ObjectId(primaryUserId)
                     // $or: [
                     //     { _id: new ObjectId(primaryUserId) }, // Matching documents with _id equal to primaryUserId
                     //     { primaryUserId: new ObjectId(primaryUserId) } // Matching documents with primaryUserId field equal to primaryUserId
