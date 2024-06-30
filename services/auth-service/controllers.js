@@ -127,7 +127,6 @@ class UserApp extends PayApiBaseApp {
         const reqId = req.id || 0;
         const userCol = this.db.collection(USER_COL);
         let { token, primaryUserId, email, type = 'GOOGLE', password } = body;
-        console.log("body", body)
         console.log("credential", token, "audience", audience)
         try {
             if(type == 'GOOGLE') {
@@ -346,6 +345,7 @@ class UserApp extends PayApiBaseApp {
             const writeResult = await userCol.findOneAndUpdate(query, updateOptions, {
                 returnDocument: 'after'
             });
+            console.log("write result", writeResult)
             if (!writeResult) {
                 return createErrorResponse(400, 'card.not.found', 'Could not identify card to update');
             }
@@ -990,10 +990,7 @@ class UserApp extends PayApiBaseApp {
                 }
             }
 
-            console.log("query", query)
-
             let updatedUser = userProfileCol.findOneAndUpdate(query, updateQuery, { returnDocument: 'after'})
-            console.log("updated user here", updatedUser);
             let collectionsToUpdates = [updatedUser];
 
             if(id) {
@@ -1001,7 +998,6 @@ class UserApp extends PayApiBaseApp {
                 collectionsToUpdates.push(updatedNfc)
             }
             let result = await Promise.all(collectionsToUpdates);
-            console.log("updated result here", result)
 
             return {
                 status: 200,
